@@ -40,7 +40,11 @@ jobs:
           echo "${{ github.event.inputs.user_ip }} | storageiptest | $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> temp_ips.txt
 
       - name: Commit and push updated IP log
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
         run: |
           git add temp_ips.txt
           git commit -m "Whitelisted IP ${{ github.event.inputs.user_ip }}" || echo "No changes to commit"
+          git remote set-url origin https://x-access-token:${GH_PAT}@github.com/${{ github.repository }}
           git push origin ip-logs
+
