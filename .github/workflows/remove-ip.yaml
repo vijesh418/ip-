@@ -1,0 +1,53 @@
+name: Remove Whitelisted IPs from Azure Storage
+
+on:
+  workflow_dispatch:
+
+jobs:
+  cleanup-ip:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+
+    steps:
+      - name: Checkout ip-logs branch
+        uses: actions/checkout@v4
+        with:
+          ref: ip-logs
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Parse and remove IPs from Azure
+        run: |
+          if [[ ! -f temp_ips.txt ]]; then
+            echo "No temp_ips.txt file found. Exiting."
+            exit 0
+          fi
+
+          while IFS='|' read -r ip storage timestamp; do
+            ip=$(echo "$ip" | xargs)
+            storage=$(echo "$storage" | xargs)
+
+            echo "Removing IP: $ip from storage account: $storage"
+            az storage account network-rule remove \
+              --resource-group ip_address_test \
+              --account-name "$storage" \
+              --ip-address "$ip" || echo "Failed to remove $ip"
+          done < temp_ips.txt
+
+      - name: Clear temp_ips.txt
+        run: |
+          > temp_ips.txt
+
+      - name: Commit and push cleared IP log
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add temp_ips.txt
+          git commit -m "Cleared whitelisted IPs" || echo "No changes to commit"
+          git push origin ip-logs
