@@ -1,22 +1,46 @@
-name: Add Runner IP to Azure Storage
+name: Add IP to Azure Storage
 
 on:
-  workflow_dispatch:  # No inputs
+  workflow_dispatch:
+    inputs:
+      user_ip:
+        description: 'Your public IP address'
+        required: true
 
 jobs:
-  whitelist-runner-ip:
+  whitelist-ip:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout ip-logs
+      - name: Checkout ip-logs branch
         uses: actions/checkout@v3
         with:
           ref: ip-logs
 
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Get public IP of GitHub runner
-        id: get_ip
+      - name: Pull latest ip-logs updates
         run: |
-          ip=$(curl -s https://api.ipify.org)
-          echo "Detected runner IP: $ip"
-          echo "ip=$ip" >> $GITHUB_OUTPUT
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git pull --rebase origin ip-logs || true
+
+      - name: Whitelist IP in Azure Storage
+        run: |
+          az storage account network-rule add \
+            --resource-group ip_address_test \
+            --account-name storageiptest \
+            --ip-address ${{ github.event.inputs.user_ip }}
+
+      - name: Append IP to temp_ips.txt
+        run: |
+          echo "${{ github.event.inputs.user_ip }} | storageiptest | $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> temp_ips.txt
+
+      - name: Commit and push updated IP log
+        run: |
+          git add temp_ips.txt
+          git commit -m "Whitelisted IP ${{ github.event.inputs.user_ip }}" || echo "No changes to commit"
+          git push origin ip-logs
