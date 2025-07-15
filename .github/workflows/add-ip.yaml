@@ -13,12 +13,12 @@ jobs:
 
     steps:
       - name: Checkout ip-logs branch
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           ref: ip-logs
 
       - name: Login to Azure
-        uses: azure/login@v1
+        uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
@@ -43,8 +43,9 @@ jobs:
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
           git add temp_ips.txt
           git commit -m "Whitelisted IP ${{ github.event.inputs.user_ip }}" || echo "No changes to commit"
           git remote set-url origin https://x-access-token:${GH_PAT}@github.com/${{ github.repository }}
           git push origin ip-logs
-
