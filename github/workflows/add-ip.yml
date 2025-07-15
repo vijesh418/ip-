@@ -1,0 +1,26 @@
+name: Add Runner IP to Azure Storage
+
+on:
+  workflow_dispatch:  # No inputs
+
+jobs:
+  whitelist-runner-ip:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout ip-logs
+        uses: actions/checkout@v3
+        with:
+          ref: ip-logs
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get public IP of GitHub runner
+        id: get_ip
+        run: |
+          ip=$(curl -s https://api.ipify.org)
+          echo "Detected runner IP: $ip"
+          echo "ip=$ip" >> $GITHUB_OUTPUT
