@@ -8,6 +8,9 @@ inputs:
   resource_group:
     description: 'Azure Resource Group name'
     required: true
+  cluster_name:
+    description: 'AKS Cluster Name (optional - targets all if empty)'
+    required: false
   azure_credentials:
     description: 'Azure service principal credentials JSON'
     required: true
@@ -43,6 +46,7 @@ runs:
       run: |
         RESOURCE_GROUP="${{ inputs.resource_group }}"
         USER_IP="${{ inputs.user_ip }}"
+        CLUSTER_NAME="${{ inputs.cluster_name }}"
         
         if ! az group show --name "$RESOURCE_GROUP" >/dev/null 2>&1; then
           echo "Resource group $RESOURCE_GROUP not found"
@@ -51,10 +55,18 @@ runs:
         
         touch ip-logs-workspace/temp_ips.txt
         
-        RESOURCES=$(az aks list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv)
-        if [ -z "$RESOURCES" ]; then
-          echo "No AKS Clusters found in resource group: $RESOURCE_GROUP"
-          exit 0
+        if [ -n "$CLUSTER_NAME" ]; then
+          # Target specific cluster
+          RESOURCES="$CLUSTER_NAME"
+          echo "Targeting specific AKS cluster: $CLUSTER_NAME"
+        else
+          # Target all clusters in resource group
+          RESOURCES=$(az aks list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv)
+          if [ -z "$RESOURCES" ]; then
+            echo "No AKS Clusters found in resource group: $RESOURCE_GROUP"
+            exit 0
+          fi
+          echo "Targeting all AKS clusters in resource group: $RESOURCE_GROUP"
         fi
         
         for RESOURCE in $RESOURCES; do

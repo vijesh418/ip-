@@ -21,6 +21,9 @@ on:
         description: 'Whitelist in Key Vaults'
         type: boolean
         default: false
+      aks_cluster_name:
+        description: 'AKS Cluster Name (optional - targets all if empty)'
+        required: false
 
 jobs:
   whitelist-resources:
@@ -47,6 +50,7 @@ jobs:
         with:
           user_ip: ${{ github.event.inputs.user_ip }}
           resource_group: ${{ github.event.inputs.resource_group }}
+          cluster_name: ${{ github.event.inputs.aks_cluster_name }}
           azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
