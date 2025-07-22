@@ -22,7 +22,7 @@ on:
         type: boolean
         default: false
       aks_cluster_name:
-        description: 'AKS Cluster Name (optional - targets all if empty)'
+        description: 'AKS Cluster Name (required if AKS enabled)'
         required: false
 
 jobs:
