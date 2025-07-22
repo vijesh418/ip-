@@ -23,6 +23,7 @@ runs:
       with:
         ref: ip-logs
         token: ${{ inputs.github_token }}
+        path: ip-logs-workspace
 
     - name: Login to Azure
       uses: azure/login@v2
@@ -31,6 +32,7 @@ runs:
 
     - name: Pull latest ip-logs updates
       shell: bash
+      working-directory: ip-logs-workspace
       run: |
         git config user.name "github-actions"
         git config user.email "github-actions@github.com"
@@ -47,7 +49,7 @@ runs:
           exit 1
         fi
         
-        touch temp_ips.txt
+        touch ip-logs-workspace/temp_ips.txt
         
         RESOURCES=$(az aks list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv)
         if [ -z "$RESOURCES" ]; then
@@ -57,11 +59,11 @@ runs:
         
         for RESOURCE in $RESOURCES; do
           echo "Adding IP to AKS Cluster: $RESOURCE"
-          if ! grep -q "$USER_IP | $RESOURCE | aks" temp_ips.txt 2>/dev/null; then
+          if ! grep -q "$USER_IP | $RESOURCE | aks" ip-logs-workspace/temp_ips.txt 2>/dev/null; then
             CURRENT_IPS=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$RESOURCE" --query "apiServerAccessProfile.authorizedIpRanges" -o tsv | tr '\n' ',' | sed 's/,$//')
             if echo "$CURRENT_IPS" | grep -q "$USER_IP/32"; then
               echo "IP $USER_IP already exists in AKS $RESOURCE, logging only"
-              echo "$USER_IP | $RESOURCE | aks | $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> temp_ips.txt
+              echo "$USER_IP | $RESOURCE | aks | $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> ip-logs-workspace/temp_ips.txt
             else
               if [ -z "$CURRENT_IPS" ]; then
                 NEW_IPS="$USER_IP/32"
@@ -69,7 +71,7 @@ runs:
                 NEW_IPS="${CURRENT_IPS},$USER_IP/32"
               fi
               az aks update --resource-group "$RESOURCE_GROUP" --name "$RESOURCE" --api-server-authorized-ip-ranges "$NEW_IPS"
-              echo "$USER_IP | $RESOURCE | aks | $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> temp_ips.txt
+              echo "$USER_IP | $RESOURCE | aks | $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> ip-logs-workspace/temp_ips.txt
             fi
           else
             echo "IP $USER_IP already logged for $RESOURCE"
@@ -78,6 +80,7 @@ runs:
 
     - name: Commit and push updated IP log
       shell: bash
+      working-directory: ip-logs-workspace
       env:
         GITHUB_TOKEN: ${{ inputs.github_token }}
       run: |

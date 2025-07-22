@@ -23,6 +23,7 @@ runs:
       with:
         ref: ip-logs
         token: ${{ inputs.github_token }}
+        path: ip-logs-workspace
 
     - name: Login to Azure
       uses: azure/login@v2
@@ -31,6 +32,7 @@ runs:
 
     - name: Pull latest ip-logs updates
       shell: bash
+      working-directory: ip-logs-workspace
       run: |
         git config user.name "github-actions"
         git config user.email "github-actions@github.com"
@@ -47,7 +49,7 @@ runs:
           exit 1
         fi
         
-        touch temp_ips.txt
+        touch ip-logs-workspace/temp_ips.txt
         
         RESOURCES=$(az storage account list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv)
         if [ -z "$RESOURCES" ]; then
@@ -57,9 +59,9 @@ runs:
         
         for RESOURCE in $RESOURCES; do
           echo "Adding IP to Storage Account: $RESOURCE"
-          if ! grep -q "$USER_IP | $RESOURCE | storage" temp_ips.txt 2>/dev/null; then
+          if ! grep -q "$USER_IP | $RESOURCE | storage" ip-logs-workspace/temp_ips.txt 2>/dev/null; then
             az storage account network-rule add --resource-group "$RESOURCE_GROUP" --account-name "$RESOURCE" --ip-address "$USER_IP"
-            echo "$USER_IP | $RESOURCE | storage | $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> temp_ips.txt
+            echo "$USER_IP | $RESOURCE | storage | $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> ip-logs-workspace/temp_ips.txt
           else
             echo "IP $USER_IP already logged for $RESOURCE"
           fi
@@ -67,6 +69,7 @@ runs:
 
     - name: Commit and push updated IP log
       shell: bash
+      working-directory: ip-logs-workspace
       env:
         GITHUB_TOKEN: ${{ inputs.github_token }}
       run: |

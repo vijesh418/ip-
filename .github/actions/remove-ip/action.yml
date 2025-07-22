@@ -17,6 +17,7 @@ runs:
       with:
         ref: ip-logs
         token: ${{ inputs.github_token }}
+        path: ip-logs-workspace
 
     - name: Login to Azure
       uses: azure/login@v2
@@ -26,7 +27,7 @@ runs:
     - name: Parse and remove IPs from Azure
       shell: bash
       run: |
-        if [[ ! -f temp_ips.txt ]]; then
+        if [[ ! -f ip-logs-workspace/temp_ips.txt ]]; then
           echo "No temp_ips.txt file found. Exiting."
           exit 0
         fi
@@ -67,15 +68,16 @@ runs:
               az keyvault network-rule remove --name "$resource" --ip-address "$ip" || echo "Failed to remove $ip"
               ;;
           esac
-        done < temp_ips.txt
+        done < ip-logs-workspace/temp_ips.txt
 
     - name: Clear temp_ips.txt
       shell: bash
       run: |
-        > temp_ips.txt
+        > ip-logs-workspace/temp_ips.txt
 
     - name: Commit and push cleared IP log
       shell: bash
+      working-directory: ip-logs-workspace
       env:
         GITHUB_TOKEN: ${{ inputs.github_token }}
       run: |
