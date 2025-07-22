@@ -62,7 +62,13 @@ jobs:
               RESOURCES=$(az aks list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv)
               for RESOURCE in $RESOURCES; do
                 echo "Adding IP to AKS Cluster: $RESOURCE"
-                az aks update --resource-group "$RESOURCE_GROUP" --name "$RESOURCE" --api-server-authorized-ip-ranges "$USER_IP/32"
+                CURRENT_IPS=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$RESOURCE" --query "apiServerAccessProfile.authorizedIpRanges" -o tsv | tr '\n' ',' | sed 's/,$//')
+                if [ -z "$CURRENT_IPS" ]; then
+                  NEW_IPS="$USER_IP/32"
+                else
+                  NEW_IPS="${CURRENT_IPS},$USER_IP/32"
+                fi
+                az aks update --resource-group "$RESOURCE_GROUP" --name "$RESOURCE" --api-server-authorized-ip-ranges "$NEW_IPS"
                 echo "$USER_IP | $RESOURCE | aks | $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> temp_ips.txt
               done
               ;;
