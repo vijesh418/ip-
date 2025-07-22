@@ -1,0 +1,89 @@
+name: 'Remove IPs from Azure Resources'
+description: 'Remove all whitelisted IP addresses from Azure resources'
+
+inputs:
+  azure_credentials:
+    description: 'Azure service principal credentials JSON'
+    required: true
+  github_token:
+    description: 'GitHub token for accessing ip-logs branch'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Checkout ip-logs branch
+      uses: actions/checkout@v4
+      with:
+        ref: ip-logs
+        token: ${{ inputs.github_token }}
+
+    - name: Login to Azure
+      uses: azure/login@v2
+      with:
+        creds: ${{ inputs.azure_credentials }}
+
+    - name: Parse and remove IPs from Azure
+      shell: bash
+      run: |
+        if [[ ! -f temp_ips.txt ]]; then
+          echo "No temp_ips.txt file found. Exiting."
+          exit 0
+        fi
+
+        while IFS='|' read -r ip resource resource_type timestamp; do
+          # Skip empty lines
+          [ -z "$ip" ] && continue
+          
+          ip=$(echo "$ip" | xargs)
+          resource=$(echo "$resource" | xargs)
+          resource_type=$(echo "$resource_type" | xargs)
+          
+          # Skip if any field is empty
+          [ -z "$ip" ] || [ -z "$resource" ] || [ -z "$resource_type" ] && continue
+
+          case $resource_type in
+            "storage")
+              echo "Removing IP: $ip from Storage Account: $resource"
+              az storage account network-rule remove --account-name "$resource" --ip-address "$ip" || echo "Failed to remove $ip"
+              ;;
+            "aks")
+              echo "Removing IP: $ip from AKS Cluster: $resource"
+              RESOURCE_GROUP=$(az aks show --name "$resource" --query "resourceGroup" -o tsv 2>/dev/null)
+              if [ -z "$RESOURCE_GROUP" ]; then
+                echo "AKS cluster $resource not found, skipping"
+                continue
+              fi
+              CURRENT_IPS=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$resource" --query "apiServerAccessProfile.authorizedIpRanges" -o tsv 2>/dev/null)
+              if ! echo "$CURRENT_IPS" | grep -q "$ip/32"; then
+                echo "IP $ip not found in AKS $resource, skipping"
+                continue
+              fi
+              NEW_IPS=$(echo "$CURRENT_IPS" | tr ' ' '\n' | grep -v "$ip/32" | tr '\n' ',' | sed 's/,$//')
+              az aks update --resource-group "$RESOURCE_GROUP" --name "$resource" --api-server-authorized-ip-ranges "$NEW_IPS" || echo "Failed to remove $ip from $resource"
+              ;;
+            "keyvault")
+              echo "Removing IP: $ip from Key Vault: $resource"
+              az keyvault network-rule remove --name "$resource" --ip-address "$ip" || echo "Failed to remove $ip"
+              ;;
+          esac
+        done < temp_ips.txt
+
+    - name: Clear temp_ips.txt
+      shell: bash
+      run: |
+        > temp_ips.txt
+
+    - name: Commit and push cleared IP log
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+      run: |
+        git config user.name "github-actions"
+        git config user.email "github-actions@github.com"
+        git add temp_ips.txt
+        git commit -m "Cleared whitelisted IPs" || echo "No changes to commit"
+        git push origin ip-logs

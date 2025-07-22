@@ -1,0 +1,91 @@
+name: 'Add IP to AKS Clusters'
+description: 'Whitelist IP address in Azure AKS Clusters'
+
+inputs:
+  user_ip:
+    description: 'Public IP address to whitelist'
+    required: true
+  resource_group:
+    description: 'Azure Resource Group name'
+    required: true
+  azure_credentials:
+    description: 'Azure service principal credentials JSON'
+    required: true
+  github_token:
+    description: 'GitHub token for accessing ip-logs branch'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Checkout ip-logs branch
+      uses: actions/checkout@v4
+      with:
+        ref: ip-logs
+        token: ${{ inputs.github_token }}
+
+    - name: Login to Azure
+      uses: azure/login@v2
+      with:
+        creds: ${{ inputs.azure_credentials }}
+
+    - name: Pull latest ip-logs updates
+      shell: bash
+      run: |
+        git config user.name "github-actions"
+        git config user.email "github-actions@github.com"
+        git pull --rebase origin ip-logs || true
+
+    - name: Add IP to AKS Clusters
+      shell: bash
+      run: |
+        RESOURCE_GROUP="${{ inputs.resource_group }}"
+        USER_IP="${{ inputs.user_ip }}"
+        
+        if ! az group show --name "$RESOURCE_GROUP" >/dev/null 2>&1; then
+          echo "Resource group $RESOURCE_GROUP not found"
+          exit 1
+        fi
+        
+        touch temp_ips.txt
+        
+        RESOURCES=$(az aks list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv)
+        if [ -z "$RESOURCES" ]; then
+          echo "No AKS Clusters found in resource group: $RESOURCE_GROUP"
+          exit 0
+        fi
+        
+        for RESOURCE in $RESOURCES; do
+          echo "Adding IP to AKS Cluster: $RESOURCE"
+          if ! grep -q "$USER_IP | $RESOURCE | aks" temp_ips.txt 2>/dev/null; then
+            CURRENT_IPS=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$RESOURCE" --query "apiServerAccessProfile.authorizedIpRanges" -o tsv | tr '\n' ',' | sed 's/,$//')
+            if echo "$CURRENT_IPS" | grep -q "$USER_IP/32"; then
+              echo "IP $USER_IP already exists in AKS $RESOURCE, logging only"
+              echo "$USER_IP | $RESOURCE | aks | $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> temp_ips.txt
+            else
+              if [ -z "$CURRENT_IPS" ]; then
+                NEW_IPS="$USER_IP/32"
+              else
+                NEW_IPS="${CURRENT_IPS},$USER_IP/32"
+              fi
+              az aks update --resource-group "$RESOURCE_GROUP" --name "$RESOURCE" --api-server-authorized-ip-ranges "$NEW_IPS"
+              echo "$USER_IP | $RESOURCE | aks | $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> temp_ips.txt
+            fi
+          else
+            echo "IP $USER_IP already logged for $RESOURCE"
+          fi
+        done
+
+    - name: Commit and push updated IP log
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+      run: |
+        git config user.name "github-actions"
+        git config user.email "github-actions@github.com"
+        git add temp_ips.txt
+        git commit -m "Whitelisted IP ${{ inputs.user_ip }} in AKS Clusters (${{ inputs.resource_group }})" || echo "No changes to commit"
+        git push origin ip-logs
