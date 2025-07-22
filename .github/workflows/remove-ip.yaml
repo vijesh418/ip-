@@ -30,9 +30,15 @@ jobs:
           fi
 
           while IFS='|' read -r ip resource resource_type timestamp; do
+            # Skip empty lines
+            [ -z "$ip" ] && continue
+            
             ip=$(echo "$ip" | xargs)
             resource=$(echo "$resource" | xargs)
             resource_type=$(echo "$resource_type" | xargs)
+            
+            # Skip if any field is empty
+            [ -z "$ip" ] || [ -z "$resource" ] || [ -z "$resource_type" ] && continue
 
             case $resource_type in
               "storage")
@@ -41,10 +47,18 @@ jobs:
                 ;;
               "aks")
                 echo "Removing IP: $ip from AKS Cluster: $resource"
-                RESOURCE_GROUP=$(az aks show --name "$resource" --query "resourceGroup" -o tsv)
-                CURRENT_IPS=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$resource" --query "apiServerAccessProfile.authorizedIpRanges" -o tsv)
+                RESOURCE_GROUP=$(az aks show --name "$resource" --query "resourceGroup" -o tsv 2>/dev/null)
+                if [ -z "$RESOURCE_GROUP" ]; then
+                  echo "AKS cluster $resource not found, skipping"
+                  continue
+                fi
+                CURRENT_IPS=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$resource" --query "apiServerAccessProfile.authorizedIpRanges" -o tsv 2>/dev/null)
+                if ! echo "$CURRENT_IPS" | grep -q "$ip/32"; then
+                  echo "IP $ip not found in AKS $resource, skipping"
+                  continue
+                fi
                 NEW_IPS=$(echo "$CURRENT_IPS" | tr ' ' '\n' | grep -v "$ip/32" | tr '\n' ',' | sed 's/,$//')
-                az aks update --resource-group "$RESOURCE_GROUP" --name "$resource" --api-server-authorized-ip-ranges "$NEW_IPS" || echo "Failed to remove $ip"
+                az aks update --resource-group "$RESOURCE_GROUP" --name "$resource" --api-server-authorized-ip-ranges "$NEW_IPS" || echo "Failed to remove $ip from $resource"
                 ;;
               "keyvault")
                 echo "Removing IP: $ip from Key Vault: $resource"
