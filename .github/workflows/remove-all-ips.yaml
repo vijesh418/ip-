@@ -1,0 +1,20 @@
+name: Remove All Whitelisted IPs
+
+on:
+  workflow_dispatch:
+
+jobs:
+  cleanup-all-ips:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Remove all IPs from all resources
+        uses: ./.github/actions/remove-ip
+        with:
+          azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
