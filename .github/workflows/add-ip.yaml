@@ -1,4 +1,4 @@
-name: Add IP to Azure Storage
+name: Add IP to Azure Resources
 
 on:
   workflow_dispatch:
@@ -6,6 +6,17 @@ on:
       user_ip:
         description: 'Your public IP address'
         required: true
+      resource_group:
+        description: 'Azure Resource Group name'
+        required: true
+      resource_type:
+        description: 'Resource type to whitelist'
+        required: true
+        type: choice
+        options:
+          - storage
+          - aks
+          - keyvault
 
 jobs:
   whitelist-ip:
@@ -32,16 +43,40 @@ jobs:
           git config user.email "github-actions@github.com"
           git pull --rebase origin ip-logs || true
 
-      - name: Whitelist IP in Azure Storage
+      - name: Whitelist IP in Azure Resources
         run: |
-          az storage account network-rule add \
-            --resource-group ip_address_test \
-            --account-name storageiptest \
-            --ip-address ${{ github.event.inputs.user_ip }}
+          RESOURCE_TYPE="${{ github.event.inputs.resource_type }}"
+          RESOURCE_GROUP="${{ github.event.inputs.resource_group }}"
+          USER_IP="${{ github.event.inputs.user_ip }}"
+          
+          case $RESOURCE_TYPE in
+            "storage")
+              RESOURCES=$(az storage account list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv)
+              for RESOURCE in $RESOURCES; do
+                echo "Adding IP to Storage Account: $RESOURCE"
+                az storage account network-rule add --resource-group "$RESOURCE_GROUP" --account-name "$RESOURCE" --ip-address "$USER_IP"
+                echo "$USER_IP | $RESOURCE | storage | $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> temp_ips.txt
+              done
+              ;;
+            "aks")
+              RESOURCES=$(az aks list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv)
+              for RESOURCE in $RESOURCES; do
+                echo "Adding IP to AKS Cluster: $RESOURCE"
+                az aks update --resource-group "$RESOURCE_GROUP" --name "$RESOURCE" --api-server-authorized-ip-ranges "$USER_IP/32"
+                echo "$USER_IP | $RESOURCE | aks | $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> temp_ips.txt
+              done
+              ;;
+            "keyvault")
+              RESOURCES=$(az keyvault list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv)
+              for RESOURCE in $RESOURCES; do
+                echo "Adding IP to Key Vault: $RESOURCE"
+                az keyvault network-rule add --name "$RESOURCE" --ip-address "$USER_IP"
+                echo "$USER_IP | $RESOURCE | keyvault | $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> temp_ips.txt
+              done
+              ;;
+          esac
 
-      - name: Append IP to temp_ips.txt
-        run: |
-          echo "${{ github.event.inputs.user_ip }} | storageiptest | $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> temp_ips.txt
+
 
       - name: Commit and push updated IP log
         env:
@@ -50,5 +85,5 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           git add temp_ips.txt
-          git commit -m "Whitelisted IP ${{ github.event.inputs.user_ip }}" || echo "No changes to commit"
+          git commit -m "Whitelisted IP ${{ github.event.inputs.user_ip }} in ${{ github.event.inputs.resource_group }} (${{ github.event.inputs.resource_type }})" || echo "No changes to commit"
           git push origin ip-logs

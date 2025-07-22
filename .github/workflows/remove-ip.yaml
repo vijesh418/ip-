@@ -1,4 +1,4 @@
-name: Remove Whitelisted IPs from Azure Storage
+name: Remove Whitelisted IPs from Azure Resources
 
 on:
   workflow_dispatch:
@@ -29,15 +29,25 @@ jobs:
             exit 0
           fi
 
-          while IFS='|' read -r ip storage timestamp; do
+          while IFS='|' read -r ip resource resource_type timestamp; do
             ip=$(echo "$ip" | xargs)
-            storage=$(echo "$storage" | xargs)
+            resource=$(echo "$resource" | xargs)
+            resource_type=$(echo "$resource_type" | xargs)
 
-            echo "Removing IP: $ip from storage account: $storage"
-            az storage account network-rule remove \
-              --resource-group ip_address_test \
-              --account-name "$storage" \
-              --ip-address "$ip" || echo "Failed to remove $ip"
+            case $resource_type in
+              "storage")
+                echo "Removing IP: $ip from Storage Account: $resource"
+                az storage account network-rule remove --account-name "$resource" --ip-address "$ip" || echo "Failed to remove $ip"
+                ;;
+              "aks")
+                echo "Removing IP: $ip from AKS Cluster: $resource"
+                az aks update --name "$resource" --api-server-authorized-ip-ranges "" || echo "Failed to remove $ip"
+                ;;
+              "keyvault")
+                echo "Removing IP: $ip from Key Vault: $resource"
+                az keyvault network-rule remove --name "$resource" --ip-address "$ip" || echo "Failed to remove $ip"
+                ;;
+            esac
           done < temp_ips.txt
 
       - name: Clear temp_ips.txt
