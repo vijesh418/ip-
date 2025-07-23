@@ -58,6 +58,11 @@ runs:
           exit 1
         fi
         
+        if ! az aks show --resource-group "$RESOURCE_GROUP" --name "$CLUSTER_NAME" >/dev/null 2>&1; then
+          echo "AKS cluster $CLUSTER_NAME not found in resource group $RESOURCE_GROUP"
+          exit 1
+        fi
+        
         touch ip-logs-workspace/temp_ips.txt
         
         echo "Adding IP to AKS Cluster: $CLUSTER_NAME"
