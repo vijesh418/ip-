@@ -29,7 +29,7 @@ jobs:
   whitelist-resources:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       actions: read
     steps:
       - name: Checkout repository
@@ -42,7 +42,6 @@ jobs:
           user_ip: ${{ github.event.inputs.user_ip }}
           resource_group: ${{ github.event.inputs.resource_group }}
           azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Add IP to AKS Clusters
         if: ${{ github.event.inputs.enable_aks == 'true' }}
@@ -52,7 +51,6 @@ jobs:
           resource_group: ${{ github.event.inputs.resource_group }}
           cluster_name: ${{ github.event.inputs.aks_cluster_name }}
           azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Add IP to Key Vaults
         if: ${{ github.event.inputs.enable_keyvault == 'true' }}
@@ -61,4 +59,3 @@ jobs:
           user_ip: ${{ github.event.inputs.user_ip }}
           resource_group: ${{ github.event.inputs.resource_group }}
           azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}

@@ -1,20 +1,62 @@
-name: Remove All Whitelisted IPs
+name: Reset Resources to Terraform Baseline
 
 on:
   workflow_dispatch:
+    inputs:
+      resource_group:
+        description: 'Azure Resource Group name'
+        required: true
+      project_type:
+        description: 'Project type for baseline IPs'
+        required: true
+        type: choice
+        options:
+          - atlantis
+          - common_aks
 
 jobs:
-  cleanup-all-ips:
+  reset-to-baseline:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       actions: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Remove all IPs from all resources
+      - name: Parse Terraform baseline IPs
+        id: parse-terraform
+        shell: bash
+        run: |
+          PROJECT_TYPE="${{ github.event.inputs.project_type }}"
+          
+          # Extract IPs from main.tf based on project type
+          case $PROJECT_TYPE in
+            "atlantis")
+              BASELINE_IPS=$(awk '/atlantis = \[/,/\]/' main.tf | grep -o '"[^"]*"' | tr -d '"' | tr '\n' ',' | sed 's/,$//')
+              ;;
+            "common_aks")
+              BASELINE_IPS=$(awk '/common_aks = \[/,/\]/' main.tf | grep -o '"[^"]*"' | tr -d '"' | tr '\n' ',' | sed 's/,$//')
+              ;;
+            *)
+              echo "Unknown project type: $PROJECT_TYPE"
+              exit 1
+              ;;
+          esac
+          
+          # Validate that we found IPs
+          if [ -z "$BASELINE_IPS" ]; then
+            echo "Error: No baseline IPs found for project type: $PROJECT_TYPE"
+            echo "Please check main.tf file format"
+            exit 1
+          fi
+          
+          echo "Extracted baseline IPs for $PROJECT_TYPE: $BASELINE_IPS"
+          echo "baseline_ips=$BASELINE_IPS" >> $GITHUB_OUTPUT
+
+      - name: Reset all resources to baseline
         uses: ./.github/actions/remove-ip
         with:
           azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          resource_group: ${{ github.event.inputs.resource_group }}
+          terraform_baseline: ${{ steps.parse-terraform.outputs.baseline_ips }}
