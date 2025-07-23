@@ -6,13 +6,7 @@ on:
       resource_group:
         description: 'Azure Resource Group name'
         required: true
-      project_type:
-        description: 'Project type for baseline IPs'
-        required: true
-        type: choice
-        options:
-          - atlantis
-          - common_aks
+
 
 jobs:
   reset-to-baseline:
@@ -28,30 +22,17 @@ jobs:
         id: parse-terraform
         shell: bash
         run: |
-          PROJECT_TYPE="${{ github.event.inputs.project_type }}"
-          
-          # Extract IPs from main.tf based on project type
-          case $PROJECT_TYPE in
-            "atlantis")
-              BASELINE_IPS=$(awk '/atlantis = \[/,/\]/' main.tf | grep -o '"[^"]*"' | tr -d '"' | tr '\n' ',' | sed 's/,$//')
-              ;;
-            "common_aks")
-              BASELINE_IPS=$(awk '/common_aks = \[/,/\]/' main.tf | grep -o '"[^"]*"' | tr -d '"' | tr '\n' ',' | sed 's/,$//')
-              ;;
-            *)
-              echo "Unknown project type: $PROJECT_TYPE"
-              exit 1
-              ;;
-          esac
+          # Extract ALL IPs from main.tf file (including CIDR blocks)
+          BASELINE_IPS=$(grep -oE '"[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(/[0-9]{1,2})?"' main.tf | tr -d '"' | sort -u | tr '\n' ',' | sed 's/,$//')
           
           # Validate that we found IPs
           if [ -z "$BASELINE_IPS" ]; then
-            echo "Error: No baseline IPs found for project type: $PROJECT_TYPE"
+            echo "Error: No baseline IPs found in main.tf"
             echo "Please check main.tf file format"
             exit 1
           fi
           
-          echo "Extracted baseline IPs for $PROJECT_TYPE: $BASELINE_IPS"
+          echo "Extracted ALL baseline IPs from main.tf: $BASELINE_IPS"
           echo "baseline_ips=$BASELINE_IPS" >> $GITHUB_OUTPUT
 
       - name: Reset all resources to baseline

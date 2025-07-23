@@ -41,64 +41,66 @@ runs:
           echo "No Storage Accounts found in resource group: $RESOURCE_GROUP"
         else
           echo "Found storage accounts: $STORAGE_ACCOUNTS"
-        fi
-        
-        for ACCOUNT in $STORAGE_ACCOUNTS; do
-          echo "Processing Storage Account: $ACCOUNT"
           
-          # Get current network rules
-          CURRENT_IPS=$(az storage account show --resource-group "$RESOURCE_GROUP" --name "$ACCOUNT" --query "networkRuleSet.ipRules[].ipAddressOrRange" -o tsv | tr '\n' ',' | sed 's/,$//')
-          
-          if [ -z "$CURRENT_IPS" ]; then
-            echo "No current IPs found for $ACCOUNT"
-            continue
-          fi
-          
-          echo "Current IPs: $CURRENT_IPS"
-          
-          # Find intersection of current and baseline IPs
-          KEEP_IPS=""
-          IFS=',' read -ra CURRENT_ARRAY <<< "$CURRENT_IPS"
-          IFS=',' read -ra BASELINE_ARRAY <<< "$BASELINE_IPS"
-          
-          for current_ip in "${CURRENT_ARRAY[@]}"; do
-            # Skip empty entries
-            [ -z "$current_ip" ] && continue
+          for ACCOUNT in $STORAGE_ACCOUNTS; do
+            echo "Processing Storage Account: $ACCOUNT"
             
-            for baseline_ip in "${BASELINE_ARRAY[@]}"; do
+            # Get current network rules
+            CURRENT_IPS=$(az storage account show --resource-group "$RESOURCE_GROUP" --name "$ACCOUNT" --query "networkRuleSet.ipRules[].ipAddressOrRange" -o tsv 2>/dev/null | tr '\n' ',' | sed 's/,$//' || echo "")
+            
+            if [ -z "$CURRENT_IPS" ]; then
+              echo "No current IPs found for $ACCOUNT"
+              continue
+            fi
+            
+            echo "Current IPs: $CURRENT_IPS"
+            
+            # Find intersection of current and baseline IPs
+            KEEP_IPS=""
+            IFS=',' read -ra CURRENT_ARRAY <<< "$CURRENT_IPS"
+            IFS=',' read -ra BASELINE_ARRAY <<< "$BASELINE_IPS"
+            
+            for current_ip in "${CURRENT_ARRAY[@]}"; do
               # Skip empty entries
-              [ -z "$baseline_ip" ] && continue
+              [ -z "$current_ip" ] && continue
               
-              # Compare IPs (handle both with and without /32)
-              if [ "$current_ip" = "$baseline_ip" ] || [ "$current_ip" = "$baseline_ip/32" ] || [ "$current_ip/32" = "$baseline_ip" ]; then
-                if [ -z "$KEEP_IPS" ]; then
-                  KEEP_IPS="$current_ip"
-                else
-                  KEEP_IPS="$KEEP_IPS,$current_ip"
+              for baseline_ip in "${BASELINE_ARRAY[@]}"; do
+                # Skip empty entries
+                [ -z "$baseline_ip" ] && continue
+                
+                # Compare IPs (handle CIDR notation)
+                if [ "$current_ip" = "$baseline_ip" ] || [ "$current_ip" = "$baseline_ip/32" ] || [ "$current_ip/32" = "$baseline_ip" ]; then
+                  if [ -z "$KEEP_IPS" ]; then
+                    KEEP_IPS="$current_ip"
+                  else
+                    KEEP_IPS="$KEEP_IPS,$current_ip"
+                  fi
+                  break
                 fi
-                break
-              fi
+              done
             done
-          done
-          
-          echo "IPs to keep: $KEEP_IPS"
-          
-          # Remove all current IP rules first
-          IFS=',' read -ra CURRENT_ARRAY <<< "$CURRENT_IPS"
-          for ip in "${CURRENT_ARRAY[@]}"; do
-            az storage account network-rule remove --resource-group "$RESOURCE_GROUP" --account-name "$ACCOUNT" --ip-address "$ip" || true
-          done
-          
-          # Add back only the baseline IPs that were present
-          if [ -n "$KEEP_IPS" ]; then
-            IFS=',' read -ra KEEP_ARRAY <<< "$KEEP_IPS"
-            for ip in "${KEEP_ARRAY[@]}"; do
-              az storage account network-rule add --resource-group "$RESOURCE_GROUP" --account-name "$ACCOUNT" --ip-address "$ip" || true
+            
+            echo "IPs to keep: $KEEP_IPS"
+            
+            # Remove all current IP rules first
+            IFS=',' read -ra CURRENT_ARRAY <<< "$CURRENT_IPS"
+            for ip in "${CURRENT_ARRAY[@]}"; do
+              [ -z "$ip" ] && continue
+              az storage account network-rule remove --resource-group "$RESOURCE_GROUP" --account-name "$ACCOUNT" --ip-address "$ip" || true
             done
-          fi
-          
-          echo "Reset complete for Storage Account: $ACCOUNT"
-        done
+            
+            # Add back only the baseline IPs that were present
+            if [ -n "$KEEP_IPS" ]; then
+              IFS=',' read -ra KEEP_ARRAY <<< "$KEEP_IPS"
+              for ip in "${KEEP_ARRAY[@]}"; do
+                [ -z "$ip" ] && continue
+                az storage account network-rule add --resource-group "$RESOURCE_GROUP" --account-name "$ACCOUNT" --ip-address "$ip" || true
+              done
+            fi
+            
+            echo "Reset complete for Storage Account: $ACCOUNT"
+          done
+        fi
 
     - name: Reset AKS Clusters to Baseline
       shell: bash
@@ -113,59 +115,62 @@ runs:
           echo "No AKS Clusters found in resource group: $RESOURCE_GROUP"
         else
           echo "Found AKS clusters: $AKS_CLUSTERS"
-        fi
-        
-        for CLUSTER in $AKS_CLUSTERS; do
-          echo "Processing AKS Cluster: $CLUSTER"
           
-          # Get current authorized IP ranges
-          CURRENT_IPS=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$CLUSTER" --query "apiServerAccessProfile.authorizedIpRanges" -o tsv 2>/dev/null | tr '\n' ',' | sed 's/,$//' || echo "")
-          
-          if [ -z "$CURRENT_IPS" ]; then
-            echo "No current IPs found for $CLUSTER"
-            continue
-          fi
-          
-          echo "Current IPs: $CURRENT_IPS"
-          
-          # Find intersection of current and baseline IPs
-          KEEP_IPS=""
-          IFS=',' read -ra CURRENT_ARRAY <<< "$CURRENT_IPS"
-          IFS=',' read -ra BASELINE_ARRAY <<< "$BASELINE_IPS"
-          
-          for current_ip in "${CURRENT_ARRAY[@]}"; do
-            # Skip empty entries
-            [ -z "$current_ip" ] && continue
+          for CLUSTER in $AKS_CLUSTERS; do
+            echo "Processing AKS Cluster: $CLUSTER"
             
-            for baseline_ip in "${BASELINE_ARRAY[@]}"; do
+            # Get current authorized IP ranges
+            CURRENT_IPS=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$CLUSTER" --query "apiServerAccessProfile.authorizedIpRanges" -o tsv 2>/dev/null | tr '\n' ',' | sed 's/,$//' || echo "")
+            
+            if [ -z "$CURRENT_IPS" ]; then
+              echo "No current IPs found for $CLUSTER"
+              continue
+            fi
+            
+            echo "Current IPs: $CURRENT_IPS"
+            
+            # Find intersection of current and baseline IPs
+            KEEP_IPS=""
+            IFS=',' read -ra CURRENT_ARRAY <<< "$CURRENT_IPS"
+            IFS=',' read -ra BASELINE_ARRAY <<< "$BASELINE_IPS"
+            
+            for current_ip in "${CURRENT_ARRAY[@]}"; do
               # Skip empty entries
-              [ -z "$baseline_ip" ] && continue
+              [ -z "$current_ip" ] && continue
               
-              # Compare IPs (handle both with and without /32)
-              if [ "$current_ip" = "$baseline_ip" ] || [ "$current_ip" = "$baseline_ip/32" ] || [ "$current_ip/32" = "$baseline_ip" ]; then
-                if [ -z "$KEEP_IPS" ]; then
-                  KEEP_IPS="$current_ip"
-                else
-                  KEEP_IPS="$KEEP_IPS,$current_ip"
+              for baseline_ip in "${BASELINE_ARRAY[@]}"; do
+                # Skip empty entries
+                [ -z "$baseline_ip" ] && continue
+                
+                # Compare IPs (handle CIDR notation)
+                if [ "$current_ip" = "$baseline_ip" ] || [ "$current_ip" = "$baseline_ip/32" ] || [ "$current_ip/32" = "$baseline_ip" ]; then
+                  if [ -z "$KEEP_IPS" ]; then
+                    KEEP_IPS="$current_ip"
+                  else
+                    KEEP_IPS="$KEEP_IPS,$current_ip"
+                  fi
+                  break
                 fi
-                break
-              fi
+              done
             done
+            
+            echo "IPs to keep: $KEEP_IPS"
+            
+            # Update AKS with only the baseline IPs
+            if [ -n "$KEEP_IPS" ]; then
+              if az aks update --resource-group "$RESOURCE_GROUP" --name "$CLUSTER" --api-server-authorized-ip-ranges "$KEEP_IPS"; then
+                echo "Successfully updated AKS cluster $CLUSTER"
+              else
+                echo "Failed to update AKS cluster $CLUSTER"
+              fi
+            else
+              echo "Warning: No baseline IPs to keep for $CLUSTER - clearing all IP ranges"
+              az aks update --resource-group "$RESOURCE_GROUP" --name "$CLUSTER" --api-server-authorized-ip-ranges "" || true
+            fi
+            
+            echo "Reset complete for AKS Cluster: $CLUSTER"
           done
-          
-          echo "IPs to keep: $KEEP_IPS"
-          
-          # Update AKS with only the baseline IPs
-          if [ -n "$KEEP_IPS" ]; then
-            az aks update --resource-group "$RESOURCE_GROUP" --name "$CLUSTER" --api-server-authorized-ip-ranges "$KEEP_IPS"
-          else
-            # If no baseline IPs to keep, clear all (this might disable API server access)
-            echo "Warning: No baseline IPs to keep for $CLUSTER - this may disable API server access"
-            az aks update --resource-group "$RESOURCE_GROUP" --name "$CLUSTER" --api-server-authorized-ip-ranges ""
-          fi
-          
-          echo "Reset complete for AKS Cluster: $CLUSTER"
-        done
+        fi
 
     - name: Reset Key Vaults to Baseline
       shell: bash
@@ -180,61 +185,63 @@ runs:
           echo "No Key Vaults found in resource group: $RESOURCE_GROUP"
         else
           echo "Found key vaults: $KEY_VAULTS"
-        fi
-        
-        for VAULT in $KEY_VAULTS; do
-          echo "Processing Key Vault: $VAULT"
           
-          # Get current network rules
-          CURRENT_IPS=$(az keyvault show --name "$VAULT" --query "properties.networkAcls.ipRules[].value" -o tsv 2>/dev/null | tr '\n' ',' | sed 's/,$//' || echo "")
-          
-          if [ -z "$CURRENT_IPS" ]; then
-            echo "No current IPs found for $VAULT"
-            continue
-          fi
-          
-          echo "Current IPs: $CURRENT_IPS"
-          
-          # Find intersection of current and baseline IPs
-          KEEP_IPS=""
-          IFS=',' read -ra CURRENT_ARRAY <<< "$CURRENT_IPS"
-          IFS=',' read -ra BASELINE_ARRAY <<< "$BASELINE_IPS"
-          
-          for current_ip in "${CURRENT_ARRAY[@]}"; do
-            # Skip empty entries
-            [ -z "$current_ip" ] && continue
+          for VAULT in $KEY_VAULTS; do
+            echo "Processing Key Vault: $VAULT"
             
-            for baseline_ip in "${BASELINE_ARRAY[@]}"; do
+            # Get current network rules
+            CURRENT_IPS=$(az keyvault show --name "$VAULT" --query "properties.networkAcls.ipRules[].value" -o tsv 2>/dev/null | tr '\n' ',' | sed 's/,$//' || echo "")
+            
+            if [ -z "$CURRENT_IPS" ]; then
+              echo "No current IPs found for $VAULT"
+              continue
+            fi
+            
+            echo "Current IPs: $CURRENT_IPS"
+            
+            # Find intersection of current and baseline IPs
+            KEEP_IPS=""
+            IFS=',' read -ra CURRENT_ARRAY <<< "$CURRENT_IPS"
+            IFS=',' read -ra BASELINE_ARRAY <<< "$BASELINE_IPS"
+            
+            for current_ip in "${CURRENT_ARRAY[@]}"; do
               # Skip empty entries
-              [ -z "$baseline_ip" ] && continue
+              [ -z "$current_ip" ] && continue
               
-              # Compare IPs
-              if [ "$current_ip" = "$baseline_ip" ]; then
-                if [ -z "$KEEP_IPS" ]; then
-                  KEEP_IPS="$current_ip"
-                else
-                  KEEP_IPS="$KEEP_IPS,$current_ip"
+              for baseline_ip in "${BASELINE_ARRAY[@]}"; do
+                # Skip empty entries
+                [ -z "$baseline_ip" ] && continue
+                
+                # Compare IPs (exact match for Key Vault)
+                if [ "$current_ip" = "$baseline_ip" ]; then
+                  if [ -z "$KEEP_IPS" ]; then
+                    KEEP_IPS="$current_ip"
+                  else
+                    KEEP_IPS="$KEEP_IPS,$current_ip"
+                  fi
+                  break
                 fi
-                break
-              fi
+              done
             done
-          done
-          
-          echo "IPs to keep: $KEEP_IPS"
-          
-          # Remove all current IP rules
-          IFS=',' read -ra CURRENT_ARRAY <<< "$CURRENT_IPS"
-          for ip in "${CURRENT_ARRAY[@]}"; do
-            az keyvault network-rule remove --name "$VAULT" --ip-address "$ip" || true
-          done
-          
-          # Add back only the baseline IPs that were present
-          if [ -n "$KEEP_IPS" ]; then
-            IFS=',' read -ra KEEP_ARRAY <<< "$KEEP_IPS"
-            for ip in "${KEEP_ARRAY[@]}"; do
-              az keyvault network-rule add --name "$VAULT" --ip-address "$ip"
+            
+            echo "IPs to keep: $KEEP_IPS"
+            
+            # Remove all current IP rules
+            IFS=',' read -ra CURRENT_ARRAY <<< "$CURRENT_IPS"
+            for ip in "${CURRENT_ARRAY[@]}"; do
+              [ -z "$ip" ] && continue
+              az keyvault network-rule remove --name "$VAULT" --ip-address "$ip" || true
             done
-          fi
-          
-          echo "Reset complete for Key Vault: $VAULT"
-        done
+            
+            # Add back only the baseline IPs that were present
+            if [ -n "$KEEP_IPS" ]; then
+              IFS=',' read -ra KEEP_ARRAY <<< "$KEEP_IPS"
+              for ip in "${KEEP_ARRAY[@]}"; do
+                [ -z "$ip" ] && continue
+                az keyvault network-rule add --name "$VAULT" --ip-address "$ip" || true
+              done
+            fi
+            
+            echo "Reset complete for Key Vault: $VAULT"
+          done
+        fi
