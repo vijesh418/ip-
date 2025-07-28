@@ -67,8 +67,8 @@ runs:
           EXISTING_IPS=$(az keyvault show --name "$VAULT" --query "properties.networkAcls.ipRules[].value" -o tsv 2>/dev/null || echo "")
           
           if [ -n "$EXISTING_IPS" ] && echo "$EXISTING_IPS" | grep -q "^$USER_IP$"; then
-            echo "IP $USER_IP already exists in Key Vault: $VAULT"
-            continue
+            echo "Error: IP $USER_IP already exists in Key Vault: $VAULT"
+            exit 1
           fi
           
           echo "Adding IP $USER_IP to Key Vault: $VAULT"

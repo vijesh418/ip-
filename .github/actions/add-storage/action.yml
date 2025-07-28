@@ -67,8 +67,8 @@ runs:
           EXISTING_IPS=$(az storage account show --resource-group "$RESOURCE_GROUP" --name "$ACCOUNT" --query "networkRuleSet.ipRules[].ipAddressOrRange" -o tsv 2>/dev/null || echo "")
           
           if [ -n "$EXISTING_IPS" ] && echo "$EXISTING_IPS" | grep -q "^$USER_IP$"; then
-            echo "IP $USER_IP already exists in Storage Account: $ACCOUNT"
-            continue
+            echo "Error: IP $USER_IP already exists in Storage Account: $ACCOUNT"
+            exit 1
           fi
           
           echo "Adding IP $USER_IP to Storage Account: $ACCOUNT"

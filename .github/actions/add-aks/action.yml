@@ -75,8 +75,8 @@ runs:
         
         # Check if IP already exists (handle both with and without /32 suffix)
         if [ -n "$CURRENT_IPS" ] && (echo "$CURRENT_IPS" | grep -q "$USER_IP/32" || echo "$CURRENT_IPS" | grep -q "$USER_IP," || echo "$CURRENT_IPS" | grep -q ",$USER_IP$" || [ "$CURRENT_IPS" = "$USER_IP" ]); then
-          echo "IP $USER_IP already exists in AKS $CLUSTER_NAME. Workflow will not proceed."
-          exit 0
+          echo "Error: IP $USER_IP already exists in AKS $CLUSTER_NAME"
+          exit 1
         fi
         
         # Add the new IP
