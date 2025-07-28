@@ -63,10 +63,10 @@ runs:
         
         # Add IP to each key vault
         for VAULT in $KEY_VAULTS; do
-          # Check if IP already exists
+          # Check if IP already exists (handle both with and without /32 suffix)
           EXISTING_IPS=$(az keyvault show --name "$VAULT" --query "properties.networkAcls.ipRules[].value" -o tsv 2>/dev/null || echo "")
           
-          if [ -n "$EXISTING_IPS" ] && echo "$EXISTING_IPS" | grep -q "^$USER_IP$"; then
+          if [ -n "$EXISTING_IPS" ] && (echo "$EXISTING_IPS" | grep -q "^$USER_IP$" || echo "$EXISTING_IPS" | grep -q "^$USER_IP/32$"); then
             echo "Error: IP $USER_IP already exists in Key Vault: $VAULT"
             exit 1
           fi

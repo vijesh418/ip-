@@ -63,10 +63,10 @@ runs:
         
         # Add IP to each storage account
         for ACCOUNT in $STORAGE_ACCOUNTS; do
-          # Check if IP already exists
+          # Check if IP already exists (handle both with and without /32 suffix)
           EXISTING_IPS=$(az storage account show --resource-group "$RESOURCE_GROUP" --name "$ACCOUNT" --query "networkRuleSet.ipRules[].ipAddressOrRange" -o tsv 2>/dev/null || echo "")
           
-          if [ -n "$EXISTING_IPS" ] && echo "$EXISTING_IPS" | grep -q "^$USER_IP$"; then
+          if [ -n "$EXISTING_IPS" ] && (echo "$EXISTING_IPS" | grep -q "^$USER_IP$" || echo "$EXISTING_IPS" | grep -q "^$USER_IP/32$"); then
             echo "Error: IP $USER_IP already exists in Storage Account: $ACCOUNT"
             exit 1
           fi
