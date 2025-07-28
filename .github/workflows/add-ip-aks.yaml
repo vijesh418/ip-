@@ -1,0 +1,32 @@
+name: Add IP to AKS Clusters
+
+on:
+  workflow_dispatch:
+    inputs:
+      user_ip:
+        description: 'Your public IP address'
+        required: true
+      resource_group:
+        description: 'Azure Resource Group name'
+        required: true
+      aks_cluster_name:
+        description: 'AKS Cluster Name'
+        required: true
+
+jobs:
+  whitelist-aks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Add IP to AKS Clusters
+        uses: ./.github/actions/add-aks
+        with:
+          user_ip: ${{ github.event.inputs.user_ip }}
+          resource_group: ${{ github.event.inputs.resource_group }}
+          cluster_name: ${{ github.event.inputs.aks_cluster_name }}
+          azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}

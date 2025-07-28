@@ -1,0 +1,28 @@
+name: Add IP to Storage Accounts
+
+on:
+  workflow_dispatch:
+    inputs:
+      user_ip:
+        description: 'Your public IP address'
+        required: true
+      resource_group:
+        description: 'Azure Resource Group name'
+        required: true
+
+jobs:
+  whitelist-storage:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Add IP to Storage Accounts
+        uses: ./.github/actions/add-storage
+        with:
+          user_ip: ${{ github.event.inputs.user_ip }}
+          resource_group: ${{ github.event.inputs.resource_group }}
+          azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}

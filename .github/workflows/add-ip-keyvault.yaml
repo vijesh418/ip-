@@ -1,0 +1,28 @@
+name: Add IP to Key Vaults
+
+on:
+  workflow_dispatch:
+    inputs:
+      user_ip:
+        description: 'Your public IP address'
+        required: true
+      resource_group:
+        description: 'Azure Resource Group name'
+        required: true
+
+jobs:
+  whitelist-keyvault:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Add IP to Key Vaults
+        uses: ./.github/actions/add-keyvault
+        with:
+          user_ip: ${{ github.event.inputs.user_ip }}
+          resource_group: ${{ github.event.inputs.resource_group }}
+          azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}
