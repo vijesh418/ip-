@@ -1,5 +1,5 @@
-name: 'Add IP to Storage Accounts'
-description: 'Whitelist IP address in Azure Storage Accounts'
+name: 'Add IP to Storage Account'
+description: 'Whitelist IP address in Azure Storage Account'
 
 inputs:
   user_ip:
@@ -7,6 +7,9 @@ inputs:
     required: true
   resource_group:
     description: 'Azure Resource Group name'
+    required: true
+  storage_account_name:
+    description: 'Storage Account name'
     required: true
   azure_credentials:
     description: 'Azure service principal credentials JSON'
@@ -20,11 +23,12 @@ runs:
       with:
         creds: ${{ inputs.azure_credentials }}
 
-    - name: Add IP to Storage Accounts
+    - name: Add IP to Storage Account
       shell: bash
       run: |
         RESOURCE_GROUP="${{ inputs.resource_group }}"
         USER_IP="${{ inputs.user_ip }}"
+        STORAGE_ACCOUNT="${{ inputs.storage_account_name }}"
         
         # Validate IP format and ranges
         if ! echo "$USER_IP" | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$' > /dev/null; then
@@ -46,36 +50,25 @@ runs:
           fi
         done
         
-        # Check if resource group exists
-        if ! az group show --name "$RESOURCE_GROUP" >/dev/null 2>&1; then
-          echo "Resource group $RESOURCE_GROUP not found"
+        # Check if storage account exists
+        if ! az storage account show --resource-group "$RESOURCE_GROUP" --name "$STORAGE_ACCOUNT" >/dev/null 2>&1; then
+          echo "Storage Account $STORAGE_ACCOUNT not found in resource group $RESOURCE_GROUP"
           exit 1
         fi
         
-        # Get all storage accounts in the resource group
-        STORAGE_ACCOUNTS=$(az storage account list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv)
-        if [ -z "$STORAGE_ACCOUNTS" ]; then
-          echo "No Storage Accounts found in resource group: $RESOURCE_GROUP"
-          exit 0
+        # Check if IP already exists (handle both with and without /32 suffix)
+        EXISTING_IPS=$(az storage account show --resource-group "$RESOURCE_GROUP" --name "$STORAGE_ACCOUNT" --query "networkRuleSet.ipRules[].ipAddressOrRange" -o tsv 2>/dev/null || echo "")
+        
+        if [ -n "$EXISTING_IPS" ] && (echo "$EXISTING_IPS" | grep -q "^$USER_IP$" || echo "$EXISTING_IPS" | grep -q "^$USER_IP/32$"); then
+          echo "Warning: IP $USER_IP already exists in Storage Account: $STORAGE_ACCOUNT"
+          echo "No changes needed."
+          exit 1
         fi
         
-        echo "Found storage accounts: $STORAGE_ACCOUNTS"
-        
-        # Add IP to each storage account
-        for ACCOUNT in $STORAGE_ACCOUNTS; do
-          # Check if IP already exists (handle both with and without /32 suffix)
-          EXISTING_IPS=$(az storage account show --resource-group "$RESOURCE_GROUP" --name "$ACCOUNT" --query "networkRuleSet.ipRules[].ipAddressOrRange" -o tsv 2>/dev/null || echo "")
-          
-          if [ -n "$EXISTING_IPS" ] && (echo "$EXISTING_IPS" | grep -q "^$USER_IP$" || echo "$EXISTING_IPS" | grep -q "^$USER_IP/32$"); then
-            echo "Error: IP $USER_IP already exists in Storage Account: $ACCOUNT"
-            exit 1
-          fi
-          
-          echo "Adding IP $USER_IP to Storage Account: $ACCOUNT"
-          if az storage account network-rule add --resource-group "$RESOURCE_GROUP" --account-name "$ACCOUNT" --ip-address "$USER_IP"; then
-            echo "Successfully added IP $USER_IP to storage account $ACCOUNT"
-          else
-            echo "Failed to add IP to storage account $ACCOUNT"
-            exit 1
-          fi
-        done
+        echo "Adding IP $USER_IP to Storage Account: $STORAGE_ACCOUNT"
+        if az storage account network-rule add --resource-group "$RESOURCE_GROUP" --account-name "$STORAGE_ACCOUNT" --ip-address "$USER_IP"; then
+          echo "Successfully added IP $USER_IP to storage account $STORAGE_ACCOUNT"
+        else
+          echo "Failed to add IP to storage account $STORAGE_ACCOUNT"
+          exit 1
+        fi

@@ -1,5 +1,5 @@
-name: 'Add IP to Key Vaults'
-description: 'Whitelist IP address in Azure Key Vaults'
+name: 'Add IP to Key Vault'
+description: 'Whitelist IP address in Azure Key Vault'
 
 inputs:
   user_ip:
@@ -7,6 +7,9 @@ inputs:
     required: true
   resource_group:
     description: 'Azure Resource Group name'
+    required: true
+  keyvault_name:
+    description: 'Key Vault name'
     required: true
   azure_credentials:
     description: 'Azure service principal credentials JSON'
@@ -20,11 +23,12 @@ runs:
       with:
         creds: ${{ inputs.azure_credentials }}
 
-    - name: Add IP to Key Vaults
+    - name: Add IP to Key Vault
       shell: bash
       run: |
         RESOURCE_GROUP="${{ inputs.resource_group }}"
         USER_IP="${{ inputs.user_ip }}"
+        KEY_VAULT="${{ inputs.keyvault_name }}"
         
         # Validate IP format and ranges
         if ! echo "$USER_IP" | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$' > /dev/null; then
@@ -52,30 +56,25 @@ runs:
           exit 1
         fi
         
-        # Get all key vaults in the resource group
-        KEY_VAULTS=$(az keyvault list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv)
-        if [ -z "$KEY_VAULTS" ]; then
-          echo "No Key Vaults found in resource group: $RESOURCE_GROUP"
+        # Check if key vault exists in the resource group
+        if ! az keyvault show --name "$KEY_VAULT" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+          echo "Key Vault $KEY_VAULT not found in resource group $RESOURCE_GROUP"
+          exit 1
+        fi
+        
+        # Check if IP already exists (handle both with and without /32 suffix)
+        EXISTING_IPS=$(az keyvault show --name "$KEY_VAULT" --query "properties.networkAcls.ipRules[].value" -o tsv 2>/dev/null || echo "")
+        
+        if [ -n "$EXISTING_IPS" ] && (echo "$EXISTING_IPS" | grep -q "^$USER_IP$" || echo "$EXISTING_IPS" | grep -q "^$USER_IP/32$"); then
+          echo "Warning: IP $USER_IP already exists in Key Vault: $KEY_VAULT"
+          echo "No changes needed."
           exit 0
         fi
         
-        echo "Found key vaults: $KEY_VAULTS"
-        
-        # Add IP to each key vault
-        for VAULT in $KEY_VAULTS; do
-          # Check if IP already exists (handle both with and without /32 suffix)
-          EXISTING_IPS=$(az keyvault show --name "$VAULT" --query "properties.networkAcls.ipRules[].value" -o tsv 2>/dev/null || echo "")
-          
-          if [ -n "$EXISTING_IPS" ] && (echo "$EXISTING_IPS" | grep -q "^$USER_IP$" || echo "$EXISTING_IPS" | grep -q "^$USER_IP/32$"); then
-            echo "Error: IP $USER_IP already exists in Key Vault: $VAULT"
-            exit 1
-          fi
-          
-          echo "Adding IP $USER_IP to Key Vault: $VAULT"
-          if az keyvault network-rule add --name "$VAULT" --ip-address "$USER_IP"; then
-            echo "Successfully added IP $USER_IP to key vault $VAULT"
-          else
-            echo "Failed to add IP to key vault $VAULT"
-            exit 1
-          fi
-        done
+        echo "Adding IP $USER_IP to Key Vault: $KEY_VAULT"
+        if az keyvault network-rule add --name "$KEY_VAULT" --ip-address "$USER_IP"; then
+          echo "Successfully added IP $USER_IP to key vault $KEY_VAULT"
+        else
+          echo "Failed to add IP to key vault $KEY_VAULT"
+          exit 1
+        fi
