@@ -68,7 +68,7 @@ runs:
         if [ -n "$EXISTING_IPS" ] && (echo "$EXISTING_IPS" | grep -q "^$USER_IP$" || echo "$EXISTING_IPS" | grep -q "^$USER_IP/32$"); then
           echo "Warning: IP $USER_IP already exists in Key Vault: $KEY_VAULT"
           echo "No changes needed."
-          exit 0
+          exit 1
         fi
         
         echo "Adding IP $USER_IP to Key Vault: $KEY_VAULT"
