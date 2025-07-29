@@ -6,9 +6,22 @@ on:
       user_ip:
         description: 'Your public IP address'
         required: true
-      resource_group:
-        description: 'Azure Resource Group name'
+      environment:
+        description: 'Environment'
         required: true
+        type: choice
+        options:
+          - ot
+          - dev
+          - prod
+      application:
+        description: 'Application'
+        required: true
+        type: choice
+        options:
+          - bentas
+          - platform
+          - tsp
       keyvault_name:
         description: 'Key Vault name'
         required: true
@@ -27,6 +40,6 @@ jobs:
         uses: ./.github/actions/add-keyvault
         with:
           user_ip: ${{ github.event.inputs.user_ip }}
-          resource_group: ${{ github.event.inputs.resource_group }}
+          resource_group: pprsp-rg-${{ github.event.inputs.environment }}-${{ github.event.inputs.application }}
           keyvault_name: ${{ github.event.inputs.keyvault_name }}
           azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}
