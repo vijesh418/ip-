@@ -50,6 +50,12 @@ runs:
           fi
         done
         
+        # Check if resource group exists
+        if ! az group show --name "$RESOURCE_GROUP" >/dev/null 2>&1; then
+          echo "Resource group $RESOURCE_GROUP not found"
+          exit 1
+        fi
+        
         # Check if storage account exists
         if ! az storage account show --resource-group "$RESOURCE_GROUP" --name "$STORAGE_ACCOUNT" >/dev/null 2>&1; then
           echo "Storage Account $STORAGE_ACCOUNT not found in resource group $RESOURCE_GROUP"
