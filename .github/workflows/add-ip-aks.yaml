@@ -22,9 +22,13 @@ on:
           - bentas
           - platform
           - tsp
-      aks_cluster_name:
-        description: 'AKS Cluster Name'
+      cluster:
+        description: 'Cluster'
         required: true
+        type: choice
+        options:
+          - a
+          - b
 
 jobs:
   whitelist-aks:
@@ -36,10 +40,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Construct AKS Cluster name
+        id: cluster-name
+        run: |
+          CLUSTER_NAME="pprsp-aks-${{ github.event.inputs.environment }}-${{ github.event.inputs.application }}-aks${{ github.event.inputs.cluster }}"
+          echo "cluster_name=$CLUSTER_NAME" >> $GITHUB_OUTPUT
+
       - name: Add IP to AKS Clusters
         uses: ./.github/actions/add-aks
         with:
           user_ip: ${{ github.event.inputs.user_ip }}
           resource_group: pprsp-rg-${{ github.event.inputs.environment }}-${{ github.event.inputs.application }}
-          cluster_name: ${{ github.event.inputs.aks_cluster_name }}
+          cluster_name: ${{ steps.cluster-name.outputs.cluster_name }}
           azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}
