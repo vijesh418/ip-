@@ -65,9 +65,10 @@ jobs:
           echo "storage_name=$STORAGE_NAME" >> $GITHUB_OUTPUT
 
       - name: Add IP to Storage Account
-        uses: ./.github/actions/add-storage
+        uses: ./.github/actions/add-ip
         with:
           user_ip: ${{ github.event.inputs.user_ip }}
           resource_group: pprsp-rg-${{ github.event.inputs.environment }}-${{ github.event.inputs.application }}
-          storage_account_name: ${{ steps.storage-name.outputs.storage_name }}
+          resource_type: storage
+          resource_name: ${{ steps.storage-name.outputs.storage_name }}
           azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}
