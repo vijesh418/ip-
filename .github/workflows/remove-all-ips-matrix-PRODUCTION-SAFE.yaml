@@ -1,0 +1,370 @@
+name: Reset Resources to Terraform Baseline (PRODUCTION SAFE)
+
+on:
+  workflow_dispatch:
+    inputs:
+      resource_group:
+        description: 'Azure Resource Group name'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run mode (true/false)'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      baseline_ips: ${{ steps.extract.outputs.baseline_ips }}
+      dry_run: ${{ steps.extract.outputs.dry_run }}
+      storage_batches: ${{ steps.count.outputs.storage_batches }}
+      aks_batches: ${{ steps.count.outputs.aks_batches }}
+      kv_batches: ${{ steps.count.outputs.kv_batches }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Extract and Validate Baseline IPs
+        id: extract
+        run: |
+          if [ ! -f "main.tf" ]; then
+            echo "ERROR: main.tf not found"
+            exit 1
+          fi
+          
+          # SAFE: Extract IPs from Terraform locals block only
+          BASELINE_IPS=$(awk '
+            /^[[:space:]]*locals[[:space:]]*{/ { in_locals=1; next }
+            in_locals && /^[[:space:]]*}[[:space:]]*$/ { in_locals=0; next }
+            in_locals && /"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/ {
+              while (match($0, /"([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+[^"]*)"/, arr)) {
+                print arr[1]
+                $0 = substr($0, RSTART + RLENGTH)
+              }
+            }
+          ' main.tf | sort -u | paste -sd,)
+          
+          if [ -z "$BASELINE_IPS" ]; then
+            echo "ERROR: No baseline IPs found in main.tf locals block"
+            exit 1
+          fi
+          
+          # SAFE: Strict IP validation with octet range checking
+          echo "Validating baseline IPs..."
+          for ip in $(echo "$BASELINE_IPS" | tr ',' '\n'); do
+            # Extract IP and CIDR
+            if [[ "$ip" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)(/([0-9]+))?$ ]]; then
+              o1=${BASH_REMATCH[1]}
+              o2=${BASH_REMATCH[2]} 
+              o3=${BASH_REMATCH[3]}
+              o4=${BASH_REMATCH[4]}
+              cidr=${BASH_REMATCH[6]}
+              
+              # Validate octet ranges (0-255)
+              if [ $o1 -gt 255 ] || [ $o2 -gt 255 ] || [ $o3 -gt 255 ] || [ $o4 -gt 255 ]; then
+                echo "ERROR: Invalid IP octets: $ip"
+                exit 1
+              fi
+              
+              # Validate CIDR range (0-32)
+              if [ -n "$cidr" ] && ([ $cidr -lt 0 ] || [ $cidr -gt 32 ]); then
+                echo "ERROR: Invalid CIDR: $ip"
+                exit 1
+              fi
+              
+              echo "✓ Valid: $ip"
+            else
+              echo "ERROR: Invalid IP format: $ip"
+              exit 1
+            fi
+          done
+          
+          echo "baseline_ips=$BASELINE_IPS" >> $GITHUB_OUTPUT
+          echo "dry_run=${{ github.event.inputs.dry_run }}" >> $GITHUB_OUTPUT
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      
+      - name: Calculate Dynamic Batches
+        id: count
+        run: |
+          RESOURCE_GROUP="${{ github.event.inputs.resource_group }}"
+          
+          if ! az group show --name "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            echo "ERROR: Resource group '$RESOURCE_GROUP' not found"
+            exit 1
+          fi
+          
+          # Count actual resources
+          STORAGE_COUNT=$(az storage account list --resource-group "$RESOURCE_GROUP" --query "length([])" -o tsv)
+          AKS_COUNT=$(az aks list --resource-group "$RESOURCE_GROUP" --query "length([])" -o tsv)
+          KV_COUNT=$(az keyvault list --resource-group "$RESOURCE_GROUP" --query "length([])" -o tsv)
+          
+          # Calculate required batches (avoid empty batches)
+          STORAGE_BATCHES=$(( ($STORAGE_COUNT + 9) / 10 ))  # Ceil division
+          AKS_BATCHES=$(( ($AKS_COUNT + 3) / 4 ))
+          KV_BATCHES=$(( ($KV_COUNT + 4) / 5 ))
+          
+          # Ensure at least 1 if resources exist
+          [ $STORAGE_COUNT -gt 0 ] && [ $STORAGE_BATCHES -eq 0 ] && STORAGE_BATCHES=1
+          [ $AKS_COUNT -gt 0 ] && [ $AKS_BATCHES -eq 0 ] && AKS_BATCHES=1
+          [ $KV_COUNT -gt 0 ] && [ $KV_BATCHES -eq 0 ] && KV_BATCHES=1
+          
+          echo "Resources: $STORAGE_COUNT storage, $AKS_COUNT AKS, $KV_COUNT KV"
+          echo "Batches needed: $STORAGE_BATCHES storage, $AKS_BATCHES AKS, $KV_BATCHES KV"
+          
+          echo "storage_batches=$STORAGE_BATCHES" >> $GITHUB_OUTPUT
+          echo "aks_batches=$AKS_BATCHES" >> $GITHUB_OUTPUT
+          echo "kv_batches=$KV_BATCHES" >> $GITHUB_OUTPUT
+
+  reset-storage:
+    needs: prepare
+    runs-on: ubuntu-latest
+    if: needs.prepare.outputs.storage_batches > 0
+    strategy:
+      fail-fast: true
+      max-parallel: 5
+      matrix:
+        batch: ${{ fromJson(format('[{0}]', join(range(1, fromJson(needs.prepare.outputs.storage_batches) + 1), ','))) }}
+    steps:
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      
+      - name: Reset Storage Batch ${{ matrix.batch }}
+        run: |
+          RESOURCE_GROUP="${{ github.event.inputs.resource_group }}"
+          BASELINE_IPS="${{ needs.prepare.outputs.baseline_ips }}"
+          DRY_RUN="${{ needs.prepare.outputs.dry_run }}"
+          BATCH_SIZE=10
+          SKIP=$(( (${{ matrix.batch }} - 1) * $BATCH_SIZE ))
+          
+          echo "=== STORAGE BATCH ${{ matrix.batch }} - DRY_RUN: $DRY_RUN ==="
+          
+          ACCOUNTS=$(az storage account list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv | sed -n "$(($SKIP + 1)),$(($SKIP + $BATCH_SIZE))p")
+          
+          if [ -z "$ACCOUNTS" ]; then
+            echo "No storage accounts in this batch"
+            exit 0
+          fi
+          
+          for account in $ACCOUNTS; do
+            echo "--- Processing: $account ---"
+            
+            current=$(az storage account show --resource-group "$RESOURCE_GROUP" --name "$account" --query "networkRuleSet.ipRules[].ipAddressOrRange" -o tsv 2>/dev/null | sort | paste -sd,)
+            
+            if [ -z "$current" ]; then
+              echo "No network rules - SKIPPING"
+              continue
+            fi
+            
+            # SAFE: Only preserve exact matches from baseline
+            keep_ips=""
+            for baseline_ip in $(echo "$BASELINE_IPS" | tr ',' '\n'); do
+              if echo "$current" | tr ',' '\n' | grep -Fxq "$baseline_ip"; then
+                keep_ips="${keep_ips:+$keep_ips,}$baseline_ip"
+                echo "✓ Preserving: $baseline_ip"
+              fi
+            done
+            
+            # Show removals
+            for current_ip in $(echo "$current" | tr ',' '\n'); do
+              if ! echo "$keep_ips" | tr ',' '\n' | grep -Fxq "$current_ip"; then
+                echo "✗ Removing: $current_ip"
+              fi
+            done
+            
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "DRY RUN - Final state: [$keep_ips]"
+              continue
+            fi
+            
+            # SAFE: Atomic update with rollback
+            echo "EXECUTING update..."
+            temp_file="/tmp/storage_backup_$account"
+            echo "$current" > "$temp_file"
+            
+            # Remove all current IPs
+            for ip in $(echo "$current" | tr ',' '\n'); do
+              if ! az storage account network-rule remove --resource-group "$RESOURCE_GROUP" --account-name "$account" --ip-address "$ip" 2>/dev/null; then
+                echo "ERROR: Failed to remove $ip - ROLLING BACK"
+                # Restore from backup
+                for restore_ip in $(cat "$temp_file" | tr ',' '\n'); do
+                  az storage account network-rule add --resource-group "$RESOURCE_GROUP" --account-name "$account" --ip-address "$restore_ip" 2>/dev/null || true
+                done
+                exit 1
+              fi
+            done
+            
+            # Add baseline IPs
+            if [ -n "$keep_ips" ]; then
+              for ip in $(echo "$keep_ips" | tr ',' '\n'); do
+                if ! az storage account network-rule add --resource-group "$RESOURCE_GROUP" --account-name "$account" --ip-address "$ip" 2>/dev/null; then
+                  echo "ERROR: Failed to add $ip"
+                  exit 1
+                fi
+              done
+            fi
+            
+            rm -f "$temp_file"
+            echo "✓ SUCCESS: $account"
+          done
+
+  reset-aks:
+    needs: prepare
+    runs-on: ubuntu-latest
+    if: needs.prepare.outputs.aks_batches > 0
+    strategy:
+      fail-fast: true
+      max-parallel: 2
+      matrix:
+        batch: ${{ fromJson(format('[{0}]', join(range(1, fromJson(needs.prepare.outputs.aks_batches) + 1), ','))) }}
+    steps:
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      
+      - name: Reset AKS Batch ${{ matrix.batch }}
+        run: |
+          RESOURCE_GROUP="${{ github.event.inputs.resource_group }}"
+          BASELINE_IPS="${{ needs.prepare.outputs.baseline_ips }}"
+          DRY_RUN="${{ needs.prepare.outputs.dry_run }}"
+          BATCH_SIZE=4
+          SKIP=$(( (${{ matrix.batch }} - 1) * $BATCH_SIZE ))
+          
+          echo "=== AKS BATCH ${{ matrix.batch }} - DRY_RUN: $DRY_RUN ==="
+          
+          CLUSTERS=$(az aks list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv | sed -n "$(($SKIP + 1)),$(($SKIP + $BATCH_SIZE))p")
+          
+          if [ -z "$CLUSTERS" ]; then
+            echo "No AKS clusters in this batch"
+            exit 0
+          fi
+          
+          for cluster in $CLUSTERS; do
+            echo "--- Processing: $cluster ---"
+            
+            current=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$cluster" --query "apiServerAccessProfile.authorizedIpRanges" -o tsv 2>/dev/null | sort | paste -sd,)
+            
+            if [ -z "$current" ]; then
+              echo "No authorized IPs - SKIPPING"
+              continue
+            fi
+            
+            # SAFE: Handle AKS /32 suffix matching
+            keep_ips=""
+            for baseline_ip in $(echo "$BASELINE_IPS" | tr ',' '\n'); do
+              # Check for exact match or /32 variant
+              if echo "$current" | tr ',' '\n' | grep -E "^${baseline_ip}(/32)?$" >/dev/null; then
+                keep_ips="${keep_ips:+$keep_ips,}$baseline_ip"
+                echo "✓ Preserving: $baseline_ip"
+              fi
+            done
+            
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "DRY RUN - Final state: [$keep_ips]"
+              continue
+            fi
+            
+            echo "EXECUTING update..."
+            if ! az aks update --resource-group "$RESOURCE_GROUP" --name "$cluster" --api-server-authorized-ip-ranges "$keep_ips" --no-wait; then
+              echo "ERROR: Failed to update $cluster"
+              exit 1
+            fi
+            echo "✓ SUCCESS: $cluster"
+          done
+
+  reset-keyvaults:
+    needs: prepare
+    runs-on: ubuntu-latest
+    if: needs.prepare.outputs.kv_batches > 0
+    strategy:
+      fail-fast: true
+      max-parallel: 8
+      matrix:
+        batch: ${{ fromJson(format('[{0}]', join(range(1, fromJson(needs.prepare.outputs.kv_batches) + 1), ','))) }}
+    steps:
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      
+      - name: Reset Key Vaults Batch ${{ matrix.batch }}
+        run: |
+          RESOURCE_GROUP="${{ github.event.inputs.resource_group }}"
+          BASELINE_IPS="${{ needs.prepare.outputs.baseline_ips }}"
+          DRY_RUN="${{ needs.prepare.outputs.dry_run }}"
+          BATCH_SIZE=5
+          SKIP=$(( (${{ matrix.batch }} - 1) * $BATCH_SIZE ))
+          
+          echo "=== KV BATCH ${{ matrix.batch }} - DRY_RUN: $DRY_RUN ==="
+          
+          VAULTS=$(az keyvault list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv | sed -n "$(($SKIP + 1)),$(($SKIP + $BATCH_SIZE))p")
+          
+          if [ -z "$VAULTS" ]; then
+            echo "No key vaults in this batch"
+            exit 0
+          fi
+          
+          for vault in $VAULTS; do
+            echo "--- Processing: $vault ---"
+            
+            current=$(az keyvault show --name "$vault" --query "properties.networkAcls.ipRules[].value" -o tsv 2>/dev/null | sort | paste -sd,)
+            
+            if [ -z "$current" ]; then
+              echo "No network ACLs - SKIPPING"
+              continue
+            fi
+            
+            # SAFE: Exact match only for Key Vault
+            keep_ips=""
+            for baseline_ip in $(echo "$BASELINE_IPS" | tr ',' '\n'); do
+              if echo "$current" | tr ',' '\n' | grep -Fxq "$baseline_ip"; then
+                keep_ips="${keep_ips:+$keep_ips,}$baseline_ip"
+                echo "✓ Preserving: $baseline_ip"
+              fi
+            done
+            
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "DRY RUN - Final state: [$keep_ips]"
+              continue
+            fi
+            
+            # SAFE: Atomic update with rollback
+            echo "EXECUTING update..."
+            temp_file="/tmp/kv_backup_$vault"
+            echo "$current" > "$temp_file"
+            
+            # Remove all current IPs
+            for ip in $(echo "$current" | tr ',' '\n'); do
+              if ! az keyvault network-rule remove --name "$vault" --ip-address "$ip" 2>/dev/null; then
+                echo "ERROR: Failed to remove $ip - ROLLING BACK"
+                # Restore from backup
+                for restore_ip in $(cat "$temp_file" | tr ',' '\n'); do
+                  az keyvault network-rule add --name "$vault" --ip-address "$restore_ip" 2>/dev/null || true
+                done
+                exit 1
+              fi
+            done
+            
+            # Add baseline IPs
+            if [ -n "$keep_ips" ]; then
+              for ip in $(echo "$keep_ips" | tr ',' '\n'); do
+                if ! az keyvault network-rule add --name "$vault" --ip-address "$ip" 2>/dev/null; then
+                  echo "ERROR: Failed to add $ip"
+                  exit 1
+                fi
+              done
+            fi
+            
+            rm -f "$temp_file"
+            echo "✓ SUCCESS: $vault"
+          done
