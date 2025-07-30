@@ -53,10 +53,8 @@ runs:
     - name: Validate Resource Group
       shell: bash
       run: |
-        RESOURCE_GROUP="${{ inputs.resource_group }}"
-        
-        if ! az group show --name "$RESOURCE_GROUP" >/dev/null 2>&1; then
-          echo "Resource group $RESOURCE_GROUP not found"
+        if ! az group show --name "${{ inputs.resource_group }}" >/dev/null 2>&1; then
+          echo "Resource group ${{ inputs.resource_group }} not found"
           exit 1
         fi
 
