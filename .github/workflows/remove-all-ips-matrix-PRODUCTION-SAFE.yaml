@@ -25,6 +25,9 @@ jobs:
       storage_batches: ${{ steps.count.outputs.storage_batches }}
       aks_batches: ${{ steps.count.outputs.aks_batches }}
       kv_batches: ${{ steps.count.outputs.kv_batches }}
+      storage_matrix: ${{ steps.count.outputs.storage_matrix }}
+      aks_matrix: ${{ steps.count.outputs.aks_matrix }}
+      kv_matrix: ${{ steps.count.outputs.kv_matrix }}
     steps:
       - uses: actions/checkout@v4
       
@@ -122,6 +125,15 @@ jobs:
           echo "storage_batches=$STORAGE_BATCHES" >> $GITHUB_OUTPUT
           echo "aks_batches=$AKS_BATCHES" >> $GITHUB_OUTPUT
           echo "kv_batches=$KV_BATCHES" >> $GITHUB_OUTPUT
+          
+          # Generate matrix arrays
+          STORAGE_MATRIX="[$(seq -s, 1 $STORAGE_BATCHES)]"
+          AKS_MATRIX="[$(seq -s, 1 $AKS_BATCHES)]"
+          KV_MATRIX="[$(seq -s, 1 $KV_BATCHES)]"
+          
+          echo "storage_matrix=$STORAGE_MATRIX" >> $GITHUB_OUTPUT
+          echo "aks_matrix=$AKS_MATRIX" >> $GITHUB_OUTPUT
+          echo "kv_matrix=$KV_MATRIX" >> $GITHUB_OUTPUT
 
   reset-storage:
     needs: prepare
@@ -131,7 +143,7 @@ jobs:
       fail-fast: true
       max-parallel: 5
       matrix:
-        batch: ${{ fromJson(format('[{0}]', join(range(1, fromJson(needs.prepare.outputs.storage_batches) + 1), ','))) }}
+        batch: ${{ fromJson(needs.prepare.outputs.storage_matrix) }}
     steps:
       - name: Login to Azure
         uses: azure/login@v2
@@ -225,7 +237,7 @@ jobs:
       fail-fast: true
       max-parallel: 2
       matrix:
-        batch: ${{ fromJson(format('[{0}]', join(range(1, fromJson(needs.prepare.outputs.aks_batches) + 1), ','))) }}
+        batch: ${{ fromJson(needs.prepare.outputs.aks_matrix) }}
     steps:
       - name: Login to Azure
         uses: azure/login@v2
@@ -290,7 +302,7 @@ jobs:
       fail-fast: true
       max-parallel: 8
       matrix:
-        batch: ${{ fromJson(format('[{0}]', join(range(1, fromJson(needs.prepare.outputs.kv_batches) + 1), ','))) }}
+        batch: ${{ fromJson(needs.prepare.outputs.kv_matrix) }}
     steps:
       - name: Login to Azure
         uses: azure/login@v2
