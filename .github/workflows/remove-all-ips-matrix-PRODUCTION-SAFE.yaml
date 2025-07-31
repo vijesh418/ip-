@@ -281,6 +281,13 @@ jobs:
               fi
             done
             
+            # Show removals
+            for current_ip in $(echo "$current" | tr ',' '\n'); do
+              if ! echo "$keep_ips" | tr ',' '\n' | grep -E "^${current_ip}(/32)?$" >/dev/null && ! echo "$BASELINE_IPS" | tr ',' '\n' | grep -E "^${current_ip%/32}(/32)?$" >/dev/null; then
+                echo "✗ Removing: $current_ip"
+              fi
+            done
+            
             if [ "$DRY_RUN" = "true" ]; then
               echo "DRY RUN - Final state: [$keep_ips]"
               continue
@@ -342,6 +349,13 @@ jobs:
               if echo "$current" | tr ',' '\n' | grep -Fxq "$baseline_ip"; then
                 keep_ips="${keep_ips:+$keep_ips,}$baseline_ip"
                 echo "✓ Preserving: $baseline_ip"
+              fi
+            done
+            
+            # Show removals
+            for current_ip in $(echo "$current" | tr ',' '\n'); do
+              if ! echo "$keep_ips" | tr ',' '\n' | grep -Fxq "$current_ip"; then
+                echo "✗ Removing: $current_ip"
               fi
             done
             
