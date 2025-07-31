@@ -187,11 +187,17 @@ jobs:
             done
             
             # Show removals
+            remove_count=0
             for current_ip in $(echo "$current" | tr ',' '\n'); do
               if ! echo "$keep_ips" | tr ',' '\n' | grep -Fxq "$current_ip"; then
                 echo "✗ Removing: $current_ip"
+                remove_count=$((remove_count + 1))
               fi
             done
+            
+            if [ $remove_count -eq 0 ]; then
+              echo "No IPs to remove from this resource"
+            fi
             
             if [ "$DRY_RUN" = "true" ]; then
               echo "DRY RUN - Final state: [$keep_ips]"
@@ -282,11 +288,17 @@ jobs:
             done
             
             # Show removals
+            remove_count=0
             for current_ip in $(echo "$current" | tr ',' '\n'); do
               if ! echo "$keep_ips" | tr ',' '\n' | grep -E "^${current_ip}(/32)?$" >/dev/null && ! echo "$BASELINE_IPS" | tr ',' '\n' | grep -E "^${current_ip%/32}(/32)?$" >/dev/null; then
                 echo "✗ Removing: $current_ip"
+                remove_count=$((remove_count + 1))
               fi
             done
+            
+            if [ $remove_count -eq 0 ]; then
+              echo "No IPs to remove from this resource"
+            fi
             
             if [ "$DRY_RUN" = "true" ]; then
               echo "DRY RUN - Final state: [$keep_ips]"
@@ -353,11 +365,17 @@ jobs:
             done
             
             # Show removals
+            remove_count=0
             for current_ip in $(echo "$current" | tr ',' '\n'); do
               if ! echo "$keep_ips" | tr ',' '\n' | grep -Fxq "$current_ip"; then
                 echo "✗ Removing: $current_ip"
+                remove_count=$((remove_count + 1))
               fi
             done
+            
+            if [ $remove_count -eq 0 ]; then
+              echo "No IPs to remove from this resource"
+            fi
             
             if [ "$DRY_RUN" = "true" ]; then
               echo "DRY RUN - Final state: [$keep_ips]"
