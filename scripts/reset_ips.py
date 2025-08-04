@@ -52,7 +52,8 @@ def reset_storage_accounts():
             )
             
             client.storage_accounts.update(resource_group, account.name, update_params)
-            print(f"✓ Storage: {account.name} - kept {len(keep_ips)} IPs")
+            removed_count = len(current_ips) - len(keep_ips)
+            print(f"✓ Storage: {account.name} - kept {len(keep_ips)} IPs, removed {removed_count} IPs")
         except Exception as e:
             print(f"✗ Storage: {account.name} - {e}")
     
@@ -87,7 +88,8 @@ def reset_aks_clusters():
             )
             # Fire-and-forget: operation continues in background
             
-            print(f"✓ AKS: {cluster.name} - kept {len(keep_ips)} IPs")
+            removed_count = len(current_ips) - len(keep_ips)
+            print(f"✓ AKS: {cluster.name} - kept {len(keep_ips)} IPs, removed {removed_count} IPs")
         except Exception as e:
             print(f"✗ AKS: {cluster.name} - {e}")
     
@@ -110,7 +112,7 @@ def reset_key_vaults():
             if vault.properties.network_acls and vault.properties.network_acls.ip_rules:
                 current_ips = [rule.value for rule in vault.properties.network_acls.ip_rules]
             
-            keep_ips = [ip for ip in current_ips if ip in baseline_ips]
+            keep_ips = [ip for ip in current_ips if should_keep_ip(ip, baseline_ips)]
             
             # Update using SDK
             from azure.mgmt.keyvault.models import VaultPatchParameters, VaultPatchProperties, NetworkRuleSet, IPRule
@@ -124,7 +126,8 @@ def reset_key_vaults():
             )
             
             client.vaults.update(resource_group, vault.name, patch_params)
-            print(f"✓ KeyVault: {vault.name} - kept {len(keep_ips)} IPs")
+            removed_count = len(current_ips) - len(keep_ips)
+            print(f"✓ KeyVault: {vault.name} - kept {len(keep_ips)} IPs, removed {removed_count} IPs")
         except Exception as e:
             print(f"✗ KeyVault: {vault.name} - {e}")
     
