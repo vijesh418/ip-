@@ -1,0 +1,43 @@
+name: Reset Resources to Terraform Baseline (Python)
+
+on:
+  workflow_dispatch:
+    inputs:
+      resource_group:
+        description: 'Azure Resource Group name'
+        required: true
+
+jobs:
+  reset-to-baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Azure dependencies
+        run: |
+          pip install azure-identity azure-mgmt-storage azure-mgmt-containerservice azure-mgmt-keyvault
+
+      - name: Parse Terraform baseline IPs
+        id: parse-terraform
+        run: |
+          BASELINE_IPS=$(grep -oE '"[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(/[0-9]{1,2})?"' main.tf | tr -d '"' | sort -u | tr '\n' ',' | sed 's/,$//')
+          
+          if [ -z "$BASELINE_IPS" ]; then
+            echo "Error: No baseline IPs found in main.tf"
+            exit 1
+          fi
+          
+          echo "baseline_ips=$BASELINE_IPS" >> $GITHUB_OUTPUT
+
+      - name: Reset all resources to baseline (Python)
+        run: python scripts/reset_ips.py
+        env:
+          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+          RESOURCE_GROUP: ${{ github.event.inputs.resource_group }}
+          TERRAFORM_BASELINE: ${{ steps.parse-terraform.outputs.baseline_ips }}
