@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 import os
 import json
+
 from concurrent.futures import ThreadPoolExecutor
 from azure.identity import ClientSecretCredential
 from azure.mgmt.storage import StorageManagementClient
-from azure.mgmt.containerservice import ContainerServiceClient
-from azure.mgmt.keyvault import KeyVaultManagementClient
 
 def get_azure_client():
     creds = json.loads(os.environ['AZURE_CREDENTIALS'])
@@ -35,16 +34,19 @@ def reset_storage_accounts():
     
     def process_account(account):
         try:
-            current_rules = client.storage_accounts.get_properties(resource_group, account.name).network_rule_set.ip_rules
-            current_ips = [rule.ip_address_or_range for rule in current_rules] if current_rules else []
+            current_account = client.storage_accounts.get_properties(resource_group, account.name)
+            current_rules = current_account.network_rule_set.ip_rules if current_account.network_rule_set else []
+            current_ips = [rule.ip_address_or_range for rule in current_rules]
             
             keep_ips = [ip for ip in current_ips if should_keep_ip(ip, baseline_ips)]
             
-            # Update network rules
+            # Preserve original default action
+            original_default = current_account.network_rule_set.default_action if current_account.network_rule_set else 'Allow'
+            
             from azure.mgmt.storage.models import StorageAccountUpdateParameters, NetworkRuleSet, IPRule
             update_params = StorageAccountUpdateParameters(
                 network_rule_set=NetworkRuleSet(
-                    default_action='Allow' if not keep_ips else 'Deny',
+                    default_action=original_default,
                     ip_rules=[IPRule(ip_address_or_range=ip) for ip in keep_ips]
                 )
             )
@@ -58,6 +60,7 @@ def reset_storage_accounts():
         list(executor.map(process_account, accounts))
 
 def reset_aks_clusters():
+    from azure.mgmt.containerservice import ContainerServiceClient
     credential, subscription_id = get_azure_client()
     client = ContainerServiceClient(credential, subscription_id)
     resource_group = os.environ['RESOURCE_GROUP']
@@ -70,15 +73,19 @@ def reset_aks_clusters():
             current_ips = cluster.api_server_access_profile.authorized_ip_ranges if cluster.api_server_access_profile else []
             keep_ips = [ip for ip in current_ips if should_keep_ip(ip, baseline_ips)]
             
-            # Update authorized IP ranges using PATCH operation
-            from azure.mgmt.containerservice.models import ManagedCluster, ManagedClusterAPIServerAccessProfile
-            cluster_update = ManagedCluster(
-                api_server_access_profile=ManagedClusterAPIServerAccessProfile(
-                    authorized_ip_ranges=keep_ips if keep_ips else []
-                )
+            # Use PATCH operation for AKS
+            from azure.mgmt.containerservice.models import ManagedClusterAPIServerAccessProfile
+            
+            # Only update the API server access profile
+            cluster.api_server_access_profile = ManagedClusterAPIServerAccessProfile(
+                authorized_ip_ranges=keep_ips
             )
             
-            client.managed_clusters.begin_update_tags(resource_group, cluster.name, cluster_update).wait()
+            # Use the existing cluster object with updated profile
+            client.managed_clusters.begin_create_or_update(
+                resource_group, cluster.name, cluster
+            ).result()
+            
             print(f"✓ AKS: {cluster.name} - kept {len(keep_ips)} IPs")
         except Exception as e:
             print(f"✗ AKS: {cluster.name} - {e}")
@@ -87,6 +94,7 @@ def reset_aks_clusters():
         list(executor.map(process_cluster, clusters))
 
 def reset_key_vaults():
+    from azure.mgmt.keyvault import KeyVaultManagementClient
     credential, subscription_id = get_azure_client()
     client = KeyVaultManagementClient(credential, subscription_id)
     resource_group = os.environ['RESOURCE_GROUP']
@@ -100,23 +108,20 @@ def reset_key_vaults():
             if vault.properties.network_acls and vault.properties.network_acls.ip_rules:
                 current_ips = [rule.value for rule in vault.properties.network_acls.ip_rules]
             
-            keep_ips = [ip for ip in current_ips if ip in baseline_ips]  # Exact match for KV
+            keep_ips = [ip for ip in current_ips if ip in baseline_ips]
             
-            # Update network ACLs
-            from azure.mgmt.keyvault.models import VaultCreateOrUpdateParameters, VaultProperties, NetworkRuleSet, IPRule
-            vault_params = VaultCreateOrUpdateParameters(
-                location=vault.location,
-                properties=VaultProperties(
-                    tenant_id=vault.properties.tenant_id,
-                    sku=vault.properties.sku,
+            # Update using SDK
+            from azure.mgmt.keyvault.models import VaultPatchParameters, VaultPatchProperties, NetworkRuleSet, IPRule
+            patch_params = VaultPatchParameters(
+                properties=VaultPatchProperties(
                     network_acls=NetworkRuleSet(
-                        default_action='Allow' if not keep_ips else 'Deny',
+                        default_action=vault.properties.network_acls.default_action if vault.properties.network_acls else 'Allow',
                         ip_rules=[IPRule(value=ip) for ip in keep_ips]
                     )
                 )
             )
             
-            client.vaults.create_or_update(resource_group, vault.name, vault_params)
+            client.vaults.update(resource_group, vault.name, patch_params)
             print(f"✓ KeyVault: {vault.name} - kept {len(keep_ips)} IPs")
         except Exception as e:
             print(f"✗ KeyVault: {vault.name} - {e}")
@@ -125,19 +130,29 @@ def reset_key_vaults():
         list(executor.map(process_vault, vaults))
 
 def main():
-    print(f"Resetting resources in {os.environ['RESOURCE_GROUP']} to baseline...")
-    
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = [
-            executor.submit(reset_storage_accounts),
-            executor.submit(reset_aks_clusters),
-            executor.submit(reset_key_vaults)
-        ]
+    try:
+        print(f"Resetting resources in {os.environ['RESOURCE_GROUP']} to baseline...")
         
-        for future in futures:
-            future.result()
-    
-    print("Reset complete!")
+        # Validate environment variables
+        required_vars = ['AZURE_CREDENTIALS', 'RESOURCE_GROUP', 'TERRAFORM_BASELINE']
+        for var in required_vars:
+            if not os.environ.get(var):
+                raise ValueError(f"Missing required environment variable: {var}")
+        
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [
+                executor.submit(reset_storage_accounts),
+                executor.submit(reset_aks_clusters),
+                executor.submit(reset_key_vaults)
+            ]
+            
+            for future in futures:
+                future.result()
+        
+        print("Reset complete!")
+    except Exception as e:
+        print(f"✗ Fatal error: {e}")
+        exit(1)
 
 if __name__ == "__main__":
     main()
