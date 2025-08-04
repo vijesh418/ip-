@@ -81,17 +81,19 @@ def reset_aks_clusters():
                 authorized_ip_ranges=keep_ips
             )
             
-            # Use the existing cluster object with updated profile
-            client.managed_clusters.begin_create_or_update(
+            # Use async operation without waiting
+            operation = client.managed_clusters.begin_create_or_update(
                 resource_group, cluster.name, cluster
-            ).result()
+            )
+            # Don't wait for completion - fire and forget for speed
             
             print(f"✓ AKS: {cluster.name} - kept {len(keep_ips)} IPs")
         except Exception as e:
             print(f"✗ AKS: {cluster.name} - {e}")
     
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        list(executor.map(process_cluster, clusters))
+    # Process clusters sequentially to avoid Azure throttling
+    for cluster in clusters:
+        process_cluster(cluster)
 
 def reset_key_vaults():
     from azure.mgmt.keyvault import KeyVaultManagementClient
