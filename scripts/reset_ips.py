@@ -81,11 +81,11 @@ def reset_aks_clusters():
                 authorized_ip_ranges=keep_ips
             )
             
-            # Use async operation without waiting
-            operation = client.managed_clusters.begin_create_or_update(
+            # Start async operation and continue immediately
+            client.managed_clusters.begin_create_or_update(
                 resource_group, cluster.name, cluster
             )
-            # Don't wait for completion - fire and forget for speed
+            # Fire-and-forget: operation continues in background
             
             print(f"✓ AKS: {cluster.name} - kept {len(keep_ips)} IPs")
         except Exception as e:
