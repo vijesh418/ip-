@@ -70,6 +70,7 @@ def reset_aks_clusters():
     client = ContainerServiceClient(credential, subscription_id)
     resource_group = os.environ['RESOURCE_GROUP']
     baseline_ips = parse_baseline_ips()
+    dry_run = os.environ.get('DRY_RUN', 'false').lower() == 'true'
 
     clusters = list(
         client.managed_clusters.list_by_resource_group(resource_group))
@@ -77,28 +78,34 @@ def reset_aks_clusters():
     def process_cluster(cluster):
         try:
             current_ips = cluster.api_server_access_profile.authorized_ip_ranges if cluster.api_server_access_profile else []
-            keep_ips = [
-                ip for ip in current_ips if should_keep_ip(ip, baseline_ips)]
+            keep_ips = [ip for ip in current_ips if should_keep_ip(ip, baseline_ips)]
+            remove_ips = [ip for ip in current_ips if not should_keep_ip(ip, baseline_ips)]
 
-            # Use PATCH operation for AKS
-            from azure.mgmt.containerservice.models import ManagedClusterAPIServerAccessProfile
+            # Print detailed IP information
+            print(f"\n{'[DRY RUN] ' if dry_run else ''}AKS: {cluster.name}")
+            print(f"  Current IPs ({len(current_ips)}): {', '.join(current_ips) if current_ips else 'None'}")
+            print(f"  Keep IPs ({len(keep_ips)}): {', '.join(keep_ips) if keep_ips else 'None'}")
+            print(f"  Remove IPs ({len(remove_ips)}): {', '.join(remove_ips) if remove_ips else 'None'}")
 
-            # Only update the API server access profile
-            cluster.api_server_access_profile = ManagedClusterAPIServerAccessProfile(
-                authorized_ip_ranges=keep_ips
-            )
+            if not dry_run:
+                # Use PATCH operation for AKS
+                from azure.mgmt.containerservice.models import ManagedClusterAPIServerAccessProfile
 
-            # Start async operation and continue immediately
-            client.managed_clusters.begin_create_or_update(
-                resource_group, cluster.name, cluster
-            )
-            # Fire-and-forget: operation continues in background
+                # Only update the API server access profile
+                cluster.api_server_access_profile = ManagedClusterAPIServerAccessProfile(
+                    authorized_ip_ranges=keep_ips
+                )
 
-            removed_count = len(current_ips) - len(keep_ips)
-            print(
-                f"✓ AKS: {cluster.name} - kept {len(keep_ips)} IPs, removed {removed_count} IPs")
+                # Start async operation and continue immediately
+                client.managed_clusters.begin_create_or_update(
+                    resource_group, cluster.name, cluster
+                )
+                # Fire-and-forget: operation continues in background
+                print(f"  ✓ Updated successfully")
+            else:
+                print(f"  ✓ Dry run - no changes made")
         except Exception as e:
-            print(f"✗ AKS: {cluster.name} - {e}")
+            print(f"  ✗ Error: {e}")
 
     # Process clusters sequentially to avoid Azure throttling
     for cluster in clusters:
@@ -144,8 +151,15 @@ def reset_aks_clusters():
 
 def main():
     try:
-        print(
-            f"Resetting resources in {os.environ['RESOURCE_GROUP']} to baseline...")
+        dry_run = os.environ.get('DRY_RUN', 'false').lower() == 'true'
+        mode = "DRY RUN" if dry_run else "EXECUTION"
+        print(f"[{mode}] Resetting resources in {os.environ['RESOURCE_GROUP']} to baseline...")
+        
+        if dry_run:
+            print("🔍 DRY RUN MODE: No actual changes will be made")
+        
+        baseline_ips = parse_baseline_ips()
+        print(f"Baseline IPs: {', '.join(baseline_ips)}\n")
 
         # Validate environment variables
         required_vars = ['AZURE_CREDENTIALS',
@@ -165,7 +179,7 @@ def main():
             for future in futures:
                 future.result()
 
-        print("Reset complete!")
+        print(f"\n{'Dry run' if dry_run else 'Reset'} complete!")
     except Exception as e:
         print(f"✗ Fatal error: {e}")
         exit(1)

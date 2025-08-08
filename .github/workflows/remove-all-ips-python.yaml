@@ -6,6 +6,14 @@ on:
       resource_group:
         description: 'Azure Resource Group name'
         required: true
+      dry_run:
+        description: 'Dry run mode (true/false)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 jobs:
   reset-to-baseline:
@@ -21,7 +29,7 @@ jobs:
 
       - name: Install Azure dependencies
         run: |
-          pip install azure-identity azure-mgmt-storage azure-mgmt-containerservice azure-mgmt-keyvault
+          pip install azure-identity azure-mgmt-containerservice
 
       - name: Parse Terraform baseline IPs
         id: parse-terraform
@@ -41,3 +49,4 @@ jobs:
           AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
           RESOURCE_GROUP: ${{ github.event.inputs.resource_group }}
           TERRAFORM_BASELINE: ${{ steps.parse-terraform.outputs.baseline_ips }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
