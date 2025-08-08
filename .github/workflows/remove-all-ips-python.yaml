@@ -3,13 +3,10 @@ name: Reset Resources to Terraform Baseline (Python)
 on:
   workflow_dispatch:
     inputs:
-      resource_group:
-        description: 'Azure Resource Group name'
-        required: true
       dry_run:
         description: 'Dry run mode (true/false)'
         required: false
-        default: 'false'
+        default: 'true'
         type: choice
         options:
           - 'false'
@@ -29,7 +26,7 @@ jobs:
 
       - name: Install Azure dependencies
         run: |
-          pip install azure-identity azure-mgmt-containerservice
+          pip install azure-identity azure-mgmt-containerservice azure-mgmt-resource
 
       - name: Parse Terraform baseline IPs
         id: parse-terraform
@@ -47,6 +44,5 @@ jobs:
         run: python scripts/reset_ips.py
         env:
           AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
-          RESOURCE_GROUP: ${{ github.event.inputs.resource_group }}
           TERRAFORM_BASELINE: ${{ steps.parse-terraform.outputs.baseline_ips }}
           DRY_RUN: ${{ github.event.inputs.dry_run }}

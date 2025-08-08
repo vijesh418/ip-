@@ -66,23 +66,43 @@ def should_keep_ip(current_ip, baseline_ips):
 
 def reset_aks_clusters():
     from azure.mgmt.containerservice import ContainerServiceClient
+    from azure.mgmt.resource import ResourceManagementClient
     credential, subscription_id = get_azure_client()
-    client = ContainerServiceClient(credential, subscription_id)
-    resource_group = os.environ['RESOURCE_GROUP']
+    aks_client = ContainerServiceClient(credential, subscription_id)
+    resource_client = ResourceManagementClient(credential, subscription_id)
     baseline_ips = parse_baseline_ips()
     dry_run = os.environ.get('DRY_RUN', 'false').lower() == 'true'
 
-    clusters = list(
-        client.managed_clusters.list_by_resource_group(resource_group))
+    # Get all resource groups in subscription
+    resource_groups = list(resource_client.resource_groups.list())
+    
+    all_clusters = []
+    rg_with_aks = []
+    
+    # Find all AKS clusters across all resource groups
+    for rg in resource_groups:
+        try:
+            clusters_in_rg = list(aks_client.managed_clusters.list_by_resource_group(rg.name))
+            if clusters_in_rg:
+                all_clusters.extend([(cluster, rg.name) for cluster in clusters_in_rg])
+                rg_with_aks.append(rg.name)
+        except Exception as e:
+            print(f"  ⚠️ Could not access resource group {rg.name}: {e}")
+    
+    print(f"Found {len(all_clusters)} AKS clusters across {len(rg_with_aks)} resource groups:")
+    for rg_name in rg_with_aks:
+        cluster_names = [cluster.name for cluster, rg in all_clusters if rg == rg_name]
+        print(f"  • {rg_name}: {', '.join(cluster_names)}")
+    print()
 
-    def process_cluster(cluster):
+    def process_cluster(cluster, rg_name):
         try:
             current_ips = cluster.api_server_access_profile.authorized_ip_ranges if cluster.api_server_access_profile else []
             keep_ips = [ip for ip in current_ips if should_keep_ip(ip, baseline_ips)]
             remove_ips = [ip for ip in current_ips if not should_keep_ip(ip, baseline_ips)]
 
             # Print detailed IP information
-            print(f"\n{'[DRY RUN] ' if dry_run else ''}AKS: {cluster.name}")
+            print(f"\n{'[DRY RUN] ' if dry_run else ''}AKS: {cluster.name} (RG: {rg_name})")
             print(f"  Current IPs ({len(current_ips)}): {', '.join(current_ips) if current_ips else 'None'}")
             print(f"  Keep IPs ({len(keep_ips)}): {', '.join(keep_ips) if keep_ips else 'None'}")
             print(f"  Remove IPs ({len(remove_ips)}): {', '.join(remove_ips) if remove_ips else 'None'}")
@@ -97,8 +117,8 @@ def reset_aks_clusters():
                 )
 
                 # Start async operation and continue immediately
-                client.managed_clusters.begin_create_or_update(
-                    resource_group, cluster.name, cluster
+                aks_client.managed_clusters.begin_create_or_update(
+                    rg_name, cluster.name, cluster
                 )
                 # Fire-and-forget: operation continues in background
                 print(f"  ✓ Updated successfully")
@@ -108,8 +128,8 @@ def reset_aks_clusters():
             print(f"  ✗ Error: {e}")
 
     # Process clusters sequentially to avoid Azure throttling
-    for cluster in clusters:
-        process_cluster(cluster)
+    for cluster, rg_name in all_clusters:
+        process_cluster(cluster, rg_name)
 
 # def reset_key_vaults():
 #     from azure.mgmt.keyvault import KeyVaultManagementClient
@@ -153,7 +173,7 @@ def main():
     try:
         dry_run = os.environ.get('DRY_RUN', 'false').lower() == 'true'
         mode = "DRY RUN" if dry_run else "EXECUTION"
-        print(f"[{mode}] Resetting resources in {os.environ['RESOURCE_GROUP']} to baseline...")
+        print(f"[{mode}] Scanning all resource groups in subscription for AKS clusters...")
         
         if dry_run:
             print("🔍 DRY RUN MODE: No actual changes will be made")
@@ -162,8 +182,7 @@ def main():
         print(f"Baseline IPs: {', '.join(baseline_ips)}\n")
 
         # Validate environment variables
-        required_vars = ['AZURE_CREDENTIALS',
-                         'RESOURCE_GROUP', 'TERRAFORM_BASELINE']
+        required_vars = ['AZURE_CREDENTIALS', 'TERRAFORM_BASELINE']
         for var in required_vars:
             if not os.environ.get(var):
                 raise ValueError(
